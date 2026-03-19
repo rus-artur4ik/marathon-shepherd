@@ -53,7 +53,7 @@ def call(Map params = [:]) {
     // ── Helper closures ──────────────────────────────────────────────────
     def countPhysicalDevices = {
         // Devices whose serial does NOT look like an emulator (emulator-55xx)
-        def output = sh(script: "adb devices | grep -v '^List' | grep 'device\$' | grep -cv 'emulator-' || echo 0",
+        def output = sh(script: "adb devices | awk '/^[^L].*device\$/ && !/^emulator-/' | wc -l",
                         returnStdout: true).trim()
         return output.toInteger()
     }

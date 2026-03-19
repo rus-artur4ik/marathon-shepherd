@@ -74,7 +74,7 @@ androidUITests(
 1. Go to **Manage Jenkins → Configure System → Global Pipeline Libraries**.
 2. Add a library named `android-test-farm` pointing to this repository, branch `main`.
 3. Install the **Lockable Resources** plugin and register a resource called `physical-android-devices`.
-4. Create a Jenkins agent with label `android-farm` on a machine with network access to all farm hosts.
+4. Create a Jenkins agent on a machine with network access to all farm hosts.
 5. Install on the agent: `farm-cli-client`, `marathon`, `python3`, `pyyaml`, `adb`.
 
 ### 2. Set Up Farm Hosts
@@ -103,7 +103,6 @@ Update `resources/farm-config.yaml` with your actual host IPs, ports, and capaci
 @Library('android-test-farm') _
 
 pipeline {
-    agent { label 'android-farm' }
     stages {
         stage('Build') {
             steps { sh './gradlew assembleDebug assembleAndroidTest' }
