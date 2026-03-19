@@ -3,7 +3,7 @@
 
 hosts:
   - name: "opi-main"
-    adb_host: "127.0.0.1"
+    adb_host: "192.168.50.254"
     adb_port: 5037
     physical_devices: true
     # No farm_server — only physical devices on this host
