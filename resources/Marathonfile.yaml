@@ -1,0 +1,27 @@
+name: "UI Tests"
+outputDir: "marathon-report"
+
+vendorConfiguration:
+  type: "Android"
+  applicationApk: "APP_APK_PLACEHOLDER"
+  testApplicationApk: "TEST_APK_PLACEHOLDER"
+  autoGrantPermission: true
+  applicationPmClear: true
+  adbInitTimeoutMillis: 60000
+  screenRecordConfiguration:
+    preferableRecorderType: "screenshot"
+    screenshotConfiguration:
+      enabled: true
+      delay: 200
+
+retryStrategy:
+  type: "fixed-quota"
+  totalAllowedRetryQuota: 50
+  retryPerTestQuota: 3
+
+batchingStrategy:
+  type: "fixed-size"
+  size: 1
+
+testOutputTimeoutMillis: 60000
+testBatchTimeoutMillis: 300000

@@ -1,0 +1,25 @@
+# farm-config.yaml — Android Test Farm topology
+# This file is loaded by the shared library and must NOT be overridden per-pipeline.
+
+hosts:
+  - name: "opi-main"
+    adb_host: "127.0.0.1"
+    adb_port: 5037
+    physical_devices: true
+    # No farm_server — only physical devices on this host
+
+#  - name: "emu-host-1"
+#    adb_host: "192.168.1.10"
+#    adb_port: 5037
+#    farm_server:
+#      url: "http://192.168.1.10:8080"
+#      max_emulators: 5
+#    physical_devices: true
+
+#  - name: "emu-host-2"
+#    adb_host: "192.168.1.11"
+#    adb_port: 5037
+#    farm_server:
+#      url: "http://192.168.1.11:8080"
+#      max_emulators: 3
+#    physical_devices: false
