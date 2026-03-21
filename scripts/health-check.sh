@@ -1,30 +1,59 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# health-check.sh — Verify that all farm hosts are reachable and healthy.
-# Reads resources/farm-config.yaml and checks each host.
+# health-check.sh — Verify manager and adapter health for the current topology.
+# Reads an MSH provider config file and queries the manager plus every configured adapter.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONFIG="${REPO_ROOT}/resources/farm-config.yaml"
+MANAGER_URL="${MSH_URL:-http://localhost:6037}"
+CONFIG="${MSH_CONFIG:-${REPO_ROOT}/deploy/msh.yaml.example}"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [--manager URL] [--config PATH]
+
+Options:
+  --manager URL  Manager base URL. Default: ${MANAGER_URL}
+  --config PATH  Provider config YAML. Default: ${CONFIG}
+  --help         Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --manager)
+            MANAGER_URL="$2"
+            shift 2
+            ;;
+        --config)
+            CONFIG="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 PASSED=0
 WARNINGS=0
 FAILED=0
 
-ok()   { echo -e "  ${GREEN}✓${NC} $1"; ((PASSED++)); }
-warn() { echo -e "  ${YELLOW}⚠${NC} $1"; ((WARNINGS++)); }
-fail() { echo -e "  ${RED}✗${NC} $1"; ((FAILED++)); }
+ok()   { echo "  [OK]   $1"; ((PASSED++)); }
+warn() { echo "  [WARN] $1"; ((WARNINGS++)); }
+fail() { echo "  [FAIL] $1"; ((FAILED++)); }
 
 # ── Check local prerequisites ────────────────────────────────────────────────
 echo "=== Local prerequisites ==="
 
-for cmd in adb docker farm-cli-client marathon python3; do
+for cmd in curl python3; do
     if command -v "$cmd" &>/dev/null; then
         ok "$cmd found ($(command -v "$cmd"))"
     else
@@ -38,72 +67,129 @@ else
     fail "python3 pyyaml module missing (pip install pyyaml)"
 fi
 
-if [ -e /dev/kvm ]; then
-    ok "/dev/kvm present"
+echo ""
+echo "=== Manager ==="
+
+manager_response=$(curl -sS -w $'\n%{http_code}' "${MANAGER_URL}/health" || true)
+manager_body="${manager_response%$'\n'*}"
+manager_code="${manager_response##*$'\n'}"
+
+if [[ "$manager_code" =~ ^2 ]]; then
+    ok "Manager responded at ${MANAGER_URL}"
 else
-    warn "/dev/kvm not found (emulators will not work on this machine)"
+    fail "Manager health check failed at ${MANAGER_URL} (HTTP ${manager_code})"
 fi
 
-# ── Parse farm-config.yaml ───────────────────────────────────────────────────
-echo ""
-echo "=== Farm hosts ==="
+if [[ -n "$manager_body" ]]; then
+    echo "  ${manager_body}"
+fi
 
 if [ ! -f "$CONFIG" ]; then
-    fail "farm-config.yaml not found at ${CONFIG}"
+    fail "Provider config not found at ${CONFIG}"
     echo ""
     echo "Results: ${PASSED} passed, ${WARNINGS} warnings, ${FAILED} failed"
     exit 1
 fi
 
-# Use python3+pyyaml to parse YAML reliably
-HOST_DATA=$(python3 -c "
+devices_response=$(curl -sS -w $'\n%{http_code}' "${MANAGER_URL}/api/v1/devices" || true)
+devices_body="${devices_response%$'\n'*}"
+devices_code="${devices_response##*$'\n'}"
+
+if [[ "$devices_code" =~ ^2 ]]; then
+    ok "Manager device inventory endpoint responded"
+    echo "  ${devices_body}"
+else
+    warn "Manager device inventory endpoint returned HTTP ${devices_code}"
+fi
+
+echo ""
+echo "=== Providers ==="
+
+provider_data=$(python3 - "$CONFIG" <<'PY'
 import yaml, json, sys
-with open('${CONFIG}') as f:
-    data = yaml.safe_load(f)
-for h in data.get('hosts', []):
-    print(json.dumps(h))
-")
+config_path = sys.argv[1]
+with open(config_path) as handle:
+    data = yaml.safe_load(handle) or {}
+for provider in data.get('providers', []):
+    print(json.dumps(provider))
+PY
+)
 
-while IFS= read -r host_json; do
-    name=$(echo "$host_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
-    adb_host=$(echo "$host_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['adb_host'])")
-    adb_port=$(echo "$host_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['adb_port'])")
-    has_farm=$(echo "$host_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('farm_server') else 'false')")
-    has_physical=$(echo "$host_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('physical_devices', False))")
+if [[ -z "${provider_data}" ]]; then
+    warn "No providers configured in ${CONFIG}"
+fi
 
+while IFS= read -r provider_json; do
+    [[ -z "$provider_json" ]] && continue
+    name=$(echo "$provider_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+    url=$(echo "$provider_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])")
+    secret=$(echo "$provider_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('secret', ''))")
     echo ""
-    echo "--- ${name} (${adb_host}:${adb_port}) ---"
+    echo "--- ${name} (${url}) ---"
 
-    # Check ADB connectivity
-    if adb connect "${adb_host}:${adb_port}" 2>/dev/null | grep -q "connected"; then
-        ok "ADB reachable"
+    provider_health=$(curl -sS -w $'\n%{http_code}' "${url}/health" || true)
+    provider_health_body="${provider_health%$'\n'*}"
+    provider_health_code="${provider_health##*$'\n'}"
+
+    if [[ "$provider_health_code" =~ ^2 ]]; then
+        ok "Adapter health endpoint responded"
+        echo "  ${provider_health_body}"
     else
-        fail "ADB unreachable at ${adb_host}:${adb_port}"
+        fail "Adapter health endpoint failed (HTTP ${provider_health_code})"
     fi
 
-    # Check farm-server if present
-    if [ "$has_farm" = "true" ]; then
-        farm_url=$(echo "$host_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['farm_server']['url'])")
-        if curl -sf "${farm_url}/health" >/dev/null 2>&1; then
-            ok "farm-server responding at ${farm_url}"
-        else
-            fail "farm-server NOT responding at ${farm_url}"
-        fi
+    if [[ -n "$secret" ]]; then
+        provider_status=$(curl -sS -H "Authorization: Bearer ${secret}" -w $'\n%{http_code}' "${url}/status" || true)
+    else
+        provider_status=$(curl -sS -w $'\n%{http_code}' "${url}/status" || true)
     fi
+    provider_status_body="${provider_status%$'\n'*}"
+    provider_status_code="${provider_status##*$'\n'}"
 
-    # Check physical devices if expected
-    if [ "$has_physical" = "True" ] || [ "$has_physical" = "true" ]; then
-        device_count=$(adb -H "$adb_host" -P "$adb_port" devices 2>/dev/null \
-                       | grep -c 'device$' \
-                       | grep -cv 'emulator-' 2>/dev/null || echo 0)
-        if [ "$device_count" -gt 0 ]; then
-            ok "${device_count} physical device(s) detected"
-        else
-            warn "Host claims physical_devices=true but none detected"
-        fi
+    if [[ "$provider_status_code" =~ ^2 ]]; then
+        ok "Adapter status endpoint responded"
+        summary=$(echo "$provider_status_body" | python3 -c "
+import json,sys
+status = json.load(sys.stdin)
+pool = status.get('pool') or {}
+if not pool and all(k in status for k in ('available', 'busy', 'total')):
+    pool = {
+        'available': status.get('available', 0),
+        'busy': status.get('busy', 0),
+        'total': status.get('total', 0)
+    }
+available = pool.get('available', 0)
+busy = pool.get('busy', 0)
+total = pool.get('total', 0)
+
+access = status.get('access') or {}
+connections = access.get('connections') or []
+preferred_id = access.get('preferredConnectionId')
+preferred = None
+if preferred_id:
+    preferred = next((connection for connection in connections if connection.get('id') == preferred_id), None)
+if preferred is None and connections:
+    preferred = connections[0]
+
+if preferred:
+    auth = (preferred.get('auth') or {}).get('type', 'unknown')
+    access_summary = (
+        f\"{preferred.get('protocol', 'unknown')}/{preferred.get('transport', 'unknown')} \"
+        f\"{preferred.get('host', 'unknown')}:{preferred.get('port', '?')} \"
+        f\"[{preferred.get('exposure', 'unknown')}, auth={auth}]\"
+    )
+else:
+    access_summary = f\"adb={status.get('adbHost', 'unknown')}:{status.get('adbPort', '?')}\"
+
+print(
+    f\"available={available}, busy={busy}, total={total}, {access_summary}\"
+)
+")
+        echo "  ${summary}"
+    else
+        fail "Adapter status endpoint failed (HTTP ${provider_status_code})"
     fi
-
-done <<< "$HOST_DATA"
+done <<< "$provider_data"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

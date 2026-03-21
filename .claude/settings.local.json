@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gradle wrapper:*)",
+      "Bash(curl -sL -o /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/gradle/wrapper/gradle-wrapper.jar \"https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar\")",
+      "Bash(./gradlew projects:*)",
+      "Bash(./gradlew :server:compileKotlin)",
+      "Bash(./gradlew :server:compileKotlin :cli:compileKotlin)",
+      "Bash(./gradlew :server:test)",
+      "Bash(./gradlew compileKotlin)",
+      "WebSearch",
+      "Bash(./gradlew build:*)",
+      "Bash(./gradlew clean:*)"
+    ]
+  }
+}

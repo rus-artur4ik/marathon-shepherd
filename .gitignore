@@ -1,2 +1,14 @@
 /.idea/
 /lib/
+
+# Gradle
+.gradle/
+build/
+server/build/
+cli/build/
+local.properties
+
+# Kotlin
+*.class
+*.jar
+*.log

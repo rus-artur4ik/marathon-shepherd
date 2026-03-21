@@ -1,0 +1,57 @@
+# Deploy this on any host with physical Android devices connected via USB.
+#
+# Required env vars (set in a .env file or export before running):
+#   HOST_IP        — the LAN IP published as the preferred ADB endpoint for this host
+#   ADAPTER_SECRET — shared secret between this adapter and the Manager
+#                    Must match the `secret` field in msh.yaml on the Manager side.
+#                    Generate with: openssl rand -hex 32
+#
+# Usage:
+#   HOST_IP=192.168.1.10 ADAPTER_SECRET=<token> docker compose -f docker-compose.adb-host.yml up -d
+#
+# Tip: keep port 5037 reachable only from trusted CI / Marathon runners.
+# Tip: store secrets in a .env file (chmod 600) and never commit it to version control.
+
+networks:
+  shepherd-adb:
+    driver: bridge
+
+services:
+  adb:
+    image: ubuntu:24.04
+    container_name: adb-server
+    command: >
+      bash -c "apt-get update && apt-get install -y --no-install-recommends adb
+      && adb -a server nodaemon"
+    privileged: true
+    devices:
+      - /dev/bus/usb
+    networks:
+      - shepherd-adb
+    restart: unless-stopped
+    ports:
+      - "5037:5037"
+
+  adapter-adb:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.adapter-adb
+    image: ghcr.io/marathon-org/shepherd-adapter-adb:latest
+    container_name: shepherd-adapter-adb
+    networks:
+      - shepherd-adb
+    restart: unless-stopped
+    environment:
+      ADAPTER_PORT: "8091"
+      ADAPTER_ADB_HOST: "${HOST_IP:?HOST_IP must be set}"
+      ADAPTER_ADB_PORT: "5037"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - adb
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

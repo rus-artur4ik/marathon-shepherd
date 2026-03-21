@@ -1,0 +1,33 @@
+# Shepherd Farm Adapter
+# Build from repo root:  docker build -f deploy/Dockerfile.adapter-farm -t shepherd-adapter-farm .
+
+# ── Stage 1: Build ──────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jdk AS builder
+
+WORKDIR /build
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties* ./
+COPY gradle/ gradle/
+COPY adapter/ adapter/
+
+RUN chmod +x gradlew && ./gradlew :adapter:farm-server:installDist --no-daemon
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/adapter/farm-server/build/install/adapter-farm /opt/adapter-farm
+
+ENV ADAPTER_PORT=7037
+ENV FARM_SERVER_PORT=8080
+ENV ADAPTER_ADB_HOST=must-be-set
+ENV ADAPTER_ADB_PORT=5037
+
+EXPOSE 7037
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:7037/health || exit 1
+
+ENTRYPOINT ["/opt/adapter-farm/bin/adapter-farm"]

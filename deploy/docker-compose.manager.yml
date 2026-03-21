@@ -1,0 +1,30 @@
+# Marathon Shepherd — Manager
+#
+# Defaults (no env vars needed for local use):
+#   ./msh.yaml   → /etc/msh/msh.yaml  (config)
+#   ./msh-data   → /var/lib/msh       (state, Marathonfiles)
+#
+# For Jenkins / external marathon runner, set MSH_DATA_PATH to an absolute path
+# accessible from the CI agent. The manager writes Marathonfiles there and returns
+# that path to callers — so both the container and the agent must see the same path.
+#
+#   MSH_DATA_PATH=/opt/msh docker compose -f deploy/docker-compose.manager.yml up -d
+
+services:
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/marathon-org/shepherd-manager:latest
+    container_name: msh-manager
+    restart: unless-stopped
+    volumes:
+      - "${MSH_CONFIG_PATH:-./msh.yaml}:/etc/msh/msh.yaml:ro"
+      - "${MSH_DATA_PATH:-./msh-data}:/var/lib/msh"
+    ports:
+      - "6037:6037"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

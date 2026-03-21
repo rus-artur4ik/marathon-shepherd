@@ -1,0 +1,49 @@
+# Deploy this on a host with Cuttlefish / CVDR installed.
+#
+# Prerequisites:
+#   - KVM enabled (/dev/kvm must exist)
+#   - CVDR installed (https://cs.android.com/android/platform/superproject/main/+/main:tools/acloud/)
+#   - Host must have enough resources for Cuttlefish VMs (4GB RAM + 10GB disk per instance)
+#
+# Required env vars:
+#   HOST_IP        — the LAN IP published as the preferred ADB endpoint for this host
+#   ADAPTER_SECRET — shared secret between this adapter and the Manager
+#                    Generate with: openssl rand -hex 32
+#
+# Usage:
+#   HOST_IP=192.168.1.30 ADAPTER_SECRET=<token> docker compose -f docker-compose.cuttlefish-host.yml up -d
+#
+# Tip: keep port 6520 reachable only from trusted CI / Marathon runners.
+
+services:
+  adapter-cuttlefish:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.adapter-cuttlefish
+    image: ghcr.io/marathon-org/shepherd-adapter-cuttlefish:latest
+    container_name: shepherd-adapter-cuttlefish
+    privileged: true
+    devices:
+      - /dev/kvm
+    volumes:
+      - /usr/local/bin/cvdr:/usr/local/bin/cvdr:ro    # mount host CVDR binary
+      - cuttlefish-home:/home/vsoc-01                  # persist CF runtime data
+    restart: unless-stopped
+    environment:
+      ADAPTER_PORT: "8093"
+      ADAPTER_ADB_HOST: "${HOST_IP:?HOST_IP must be set}"
+      ADAPTER_ADB_PORT: "6520"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+      CVDR_PATH: "/usr/local/bin/cvdr"
+      CVDR_LEASES_PATH: "/home/vsoc-01/msh-cuttlefish-leases.json"
+    ports:
+      - "8093:8093"
+      - "6520:6520"     # Cuttlefish adb port
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8093/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cuttlefish-home:
