@@ -1,0 +1,145 @@
+services:
+  adb:
+    image: ubuntu:24.04
+    container_name: msh-integration-adb
+    command: >
+      bash -lc "apt-get update && apt-get install -y --no-install-recommends adb
+      && adb -a server nodaemon"
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "adb devices >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  farm-server:
+    image: python:3.12-alpine
+    container_name: msh-integration-farm-server
+    command: ["python", "/opt/integration/farm_server.py"]
+    environment:
+      FARM_SERVER_HOST: "0.0.0.0"
+      FARM_SERVER_PORT: "8080"
+      FARM_SERVER_TOTAL: "3"
+      FARM_SERVER_AVAILABLE: "3"
+    volumes:
+      - "./integration:/opt/integration:ro"
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shepherd-adb:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.shepherd-adb
+    image: msh-shepherd-adb-integration:latest
+    container_name: msh-integration-shepherd-adb
+    depends_on:
+      adb:
+        condition: service_healthy
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_HOST: "adb"
+      ADAPTER_ADB_PORT: "5037"
+      ADB_SERVER_SOCKET: "tcp:adb:5037"
+      ADAPTER_SECRET: "integration-secret-adb"
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shepherd-farm:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.shepherd-farm
+    image: msh-shepherd-farm-integration:latest
+    container_name: msh-integration-shepherd-farm
+    depends_on:
+      farm-server:
+        condition: service_healthy
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_HOST: "farm-server"
+      ADAPTER_ADB_PORT: "5037"
+      FARM_SERVER_HOST: "farm-server"
+      FARM_SERVER_PORT: "8080"
+      FARM_SUPPORTED_API_LEVELS: "34"
+      ADAPTER_SECRET: "integration-secret-farm"
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shepherd-cuttlefish:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.shepherd-cuttlefish
+    image: msh-shepherd-cuttlefish-integration:latest
+    container_name: msh-integration-shepherd-cuttlefish
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_HOST: "shepherd-cuttlefish"
+      ADAPTER_ADB_PORT: "6520"
+      ADAPTER_SECRET: "integration-secret-cuttlefish"
+      CVDR_PATH: "/opt/integration/cvdr"
+      CVDR_LEASES_PATH: "/var/lib/cvdr/leases.json"
+      CVDR_STATE_PATH: "/var/lib/cvdr/state.json"
+      CVDR_INITIAL_INSTANCES: "2"
+    volumes:
+      - "./integration/cvdr:/opt/integration/cvdr:ro"
+      - msh-integration-cvdr:/var/lib/cvdr
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: msh-manager-integration:latest
+    container_name: msh-integration-manager
+    depends_on:
+      shepherd-adb:
+        condition: service_healthy
+      shepherd-farm:
+        condition: service_healthy
+      shepherd-cuttlefish:
+        condition: service_healthy
+    environment:
+      MSH_PORT: "6037"
+      MSH_CONFIG: "/etc/msh/msh.yaml"
+      MSH_DATA_DIR: "/var/lib/msh"
+    volumes:
+      - "./integration/msh.integration.yaml:/etc/msh/msh.yaml:ro"
+      - msh-integration-data:/var/lib/msh
+    ports:
+      - "16037:6037"
+    networks:
+      - msh-integration
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  msh-integration-data:
+  msh-integration-cvdr:
+
+networks:
+  msh-integration:
+    driver: bridge

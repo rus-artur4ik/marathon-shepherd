@@ -1,8 +1,8 @@
 rootProject.name = "marathon-shepherd"
 
 include(":adapter:api")
-include(":adapter:adb")
-include(":adapter:farm-server")
-include(":adapter:cuttlefish")
+include(":adapter:shepherd-adb")
+include(":adapter:shepherd-farm")
+include(":adapter:shepherd-cuttlefish")
 include(":manager:service")
 include(":manager:cli")

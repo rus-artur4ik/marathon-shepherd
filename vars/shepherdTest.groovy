@@ -3,79 +3,71 @@
  *
  * Usage:
  *   @Library('marathon-shepherd') _
- *   shepherdTest(devices: 5, appApk: 'app.apk', testApk: 'test.apk')
+ *   shepherdTest(devices: 5, api: '34', deviceType: 'emulator') { adbServers ->
+ *       // adbServers is List<Map> with keys: host, port
+ *       // build Marathonfile and run marathon inside this closure
+ *   }
  *
  * Parameters:
  *   devices     - Number of devices to allocate (default: 1)
- *   appApk      - Path to application APK (auto-detected if omitted)
- *   testApk     - Path to test APK (auto-detected if omitted)
- *   api         - Android API level for emulator-backed providers (default: "34")
+ *   api         - Android API level for allocation (default: "34")
  *   ttl         - Session TTL in seconds (default: 3600)
+ *   deviceType  - Optional device filter: "physical" or "emulator"
  *   managerUrl  - Manager URL (default: env.MSH_URL, fallback http://localhost:6037)
- *
- * Important:
- *   The generated `marathonfilePath` must be visible on the Jenkins agent.
- *   If the manager runs in Docker, mount the same absolute host path into the
- *   manager container and run Jenkins on the same node or mount that path into
- *   the Jenkins agent too.
  */
-def call(Map params = [:]) {
+def call(Map params = [:], Closure runWithAdbServers = null) {
+    if (runWithAdbServers == null) {
+        error "shepherdTest requires a closure that receives adbServers and runs Marathon."
+    }
+
     String managerUrl = normalizeManagerUrl(params.managerUrl ?: env.MSH_URL ?: 'http://localhost:6037')
     int requestedDevices = (params.devices ?: 1) as int
     String requestedApiLevel = (params.api ?: '34') as String
     long ttlSeconds = (params.ttl ?: 3600) as long
-    String appApk = params.appApk ?: findApk('debug', false)
-    String testApk = params.testApk ?: findApk('debug', true)
+    String requestedDeviceType = normalizeDeviceType(params.deviceType)
     String sessionId = null
 
-    if (!appApk || !testApk) {
-        error "Could not resolve APK paths. Provide appApk and testApk explicitly."
-    }
     ensureCommandAvailable('curl')
-    ensureCommandAvailable('marathon')
 
-    printSection('Session Request', [
+    List<String> requestLines = [
         "Manager URL       : ${managerUrl}",
         "Requested devices : ${requestedDevices}",
         "API level         : ${requestedApiLevel}",
         "TTL seconds       : ${ttlSeconds}",
-        "App APK           : ${appApk}",
-        "Test APK          : ${testApk}"
-    ])
+        "Device type       : ${requestedDeviceType ?: 'all'}"
+    ]
+    printSection('Session Request', requestLines)
 
-    def requestBody = groovy.json.JsonOutput.toJson([
+    Map<String, Object> requestPayload = [
         devices   : requestedDevices,
         apiLevel  : requestedApiLevel,
-        appApk    : appApk,
-        testApk   : testApk,
         ttlSeconds: ttlSeconds
-    ])
+    ]
+    if (requestedDeviceType != null) {
+        requestPayload.deviceType = requestedDeviceType
+    }
 
     def response = requestJson(
         method: 'POST',
         url: "${managerUrl}/api/v1/sessions",
-        requestBody: requestBody,
+        requestBody: groovy.json.JsonOutput.toJson(requestPayload),
         expectedStatusCodes: ['201']
     )
-    def session = response.json
+    Map session = response.json as Map
     sessionId = session.id as String
     int allocatedDevices = (session.allocatedDevices ?: 0) as int
-    String marathonfilePath = session.marathonfilePath as String
-    List<String> adbServers = ((session.adbServers ?: []) as List).collect { adbServer ->
-        "${adbServer.host}:${adbServer.port}"
-    }
+    List<Map<String, Object>> adbServers = parseAdbServers(session.adbServers)
 
     List<String> sessionLines = [
         "Session ID        : ${sessionId}",
         "Status            : ${session.status}",
         "Allocated devices : ${allocatedDevices}/${session.requestedDevices}",
-        "Expires at        : ${session.expiresAt}",
-        "Marathonfile      : ${marathonfilePath ?: 'not provided'}"
+        "Expires at        : ${session.expiresAt}"
     ]
     if (adbServers.isEmpty()) {
         sessionLines << "ADB servers       : none"
     } else {
-        sessionLines << "ADB servers       : ${adbServers.join(', ')}"
+        sessionLines << "ADB servers       : ${adbServers.collect { entry -> "${entry.host}:${entry.port}" }.join(', ')}"
     }
     printSection('Session Ready', sessionLines)
 
@@ -85,38 +77,25 @@ def call(Map params = [:]) {
                 "The run will continue with the allocated capacity."
         )
     }
-    if (!marathonfilePath) {
-        error "Session ${sessionId} does not include a Marathonfile path."
-    }
-    if (!isFileVisibleToAgent(marathonfilePath)) {
-        printWarning(
-            "Marathonfile path is not visible on this Jenkins agent: ${marathonfilePath}"
-        )
-        printWarning(
-            "If the manager runs in Docker, mount the same absolute path into the container " +
-                "and into the Jenkins agent."
-        )
-        error "Session ${sessionId} returned an inaccessible Marathonfile path."
+    if (adbServers.isEmpty()) {
+        error "Session ${sessionId} does not include adbServers."
     }
 
-    Exception marathonError = null
+    Exception runError = null
     Exception releaseError = null
     try {
-        printSection('Marathon Run', [
-            "Command           : marathon --marathonfile ${marathonfilePath}",
-            "Report directory  : marathon-report/**"
+        printSection('Session Execution', [
+            "Session ID        : ${sessionId}",
+            "Closure args      : adbServers${runWithAdbServers.maximumNumberOfParameters >= 2 ? ', session' : ''}"
         ])
-        sh(
-            label: "Run Marathon for session ${sessionId}",
-            script: "set -euo pipefail\nmarathon --marathonfile ${quoteShellArg(marathonfilePath)}"
-        )
-        printSection('Marathon Result', [
+        executeRunClosure(runWithAdbServers, adbServers, session)
+        printSection('Execution Result', [
             "Session ID        : ${sessionId}",
             "Status            : success"
         ])
     } catch (Exception err) {
-        marathonError = err
-        printSection('Marathon Result', [
+        runError = err
+        printSection('Execution Result', [
             "Session ID        : ${sessionId}",
             "Status            : failed",
             "Reason            : ${summarizeError(err)}"
@@ -144,26 +123,47 @@ def call(Map params = [:]) {
             }
         }
         printSection('Report Summary', collectReportLines())
-        if (marathonError == null && releaseError != null) {
+        if (runError == null && releaseError != null) {
             throw releaseError
         }
     }
 }
 
-private String findApk(String buildType, boolean isTest) {
-    String pattern = isTest
-        ? "*/build/outputs/apk/androidTest/${buildType}/*.apk"
-        : "*/build/outputs/apk/${buildType}/*.apk"
-    String exclude = isTest ? '' : '! -name "*androidTest*"'
-    String result = sh(
-        script: "find . -path '${pattern}' ${exclude} | head -1",
-        returnStdout: true
-    ).trim()
-    return result ?: null
-}
-
 private String normalizeManagerUrl(String managerUrl) {
     return managerUrl.replaceAll('/+$', '')
+}
+
+private String normalizeDeviceType(Object rawDeviceType) {
+    if (rawDeviceType == null) return null
+    String normalized = rawDeviceType.toString().trim().toLowerCase(java.util.Locale.ROOT)
+    return normalized.isEmpty() ? null : normalized
+}
+
+private List<Map<String, Object>> parseAdbServers(Object rawAdbServers) {
+    List input = (rawAdbServers ?: []) as List
+    return input.collect { entry ->
+        Map<String, Object> item = entry as Map<String, Object>
+        Number port = item.port as Number
+        return [
+            host: item.host?.toString(),
+            port: port?.intValue()
+        ]
+    }.findAll { item ->
+        item.host != null && item.port != null
+    }
+}
+
+private void executeRunClosure(Closure runWithAdbServers, List<Map<String, Object>> adbServers, Map session) {
+    int arity = runWithAdbServers.maximumNumberOfParameters
+    if (arity <= 0) {
+        runWithAdbServers.call()
+        return
+    }
+    if (arity == 1) {
+        runWithAdbServers.call(adbServers)
+        return
+    }
+    runWithAdbServers.call(adbServers, session)
 }
 
 private void ensureCommandAvailable(String command) {
@@ -174,14 +174,6 @@ private void ensureCommandAvailable(String command) {
     if (status != 0) {
         error "Required command is not available on the Jenkins agent: ${command}"
     }
-}
-
-private boolean isFileVisibleToAgent(String path) {
-    int status = sh(
-        script: "test -f ${quoteShellArg(path)}",
-        returnStatus: true
-    )
-    return status == 0
 }
 
 private Map requestJson(Map args) {

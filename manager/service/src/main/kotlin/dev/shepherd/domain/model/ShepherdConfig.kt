@@ -8,7 +8,7 @@ data class ShepherdConfig(
 )
 
 /**
- * A provider is any host running a Shepherd adapter (adapter-adb, adapter-farm, or adapter-cuttlefish).
+ * A provider is any host running a Shepherd adapter (shepherd-adb, shepherd-farm, or shepherd-cuttlefish).
  * The Manager doesn't care which type — all expose the same REST contract.
  *
  * Security note: the config file containing secrets should be readable only by

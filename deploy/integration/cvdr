@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+
+STATE_PATH = Path(os.getenv("CVDR_STATE_PATH", "/tmp/cvdr-state.json"))
+INITIAL_INSTANCES = max(0, int(os.getenv("CVDR_INITIAL_INSTANCES", "2")))
+
+
+def initialize_state_if_needed() -> None:
+    if STATE_PATH.exists():
+        return
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    groups = {}
+    if INITIAL_INSTANCES > 0:
+        groups["bootstrap"] = INITIAL_INSTANCES
+    write_state({"groups": groups})
+
+
+def read_state() -> dict[str, dict[str, int]]:
+    initialize_state_if_needed()
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except Exception:
+        return {"groups": {}}
+
+
+def write_state(state: dict[str, dict[str, int]]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(state))
+
+
+def list_instances_json(state: dict[str, dict[str, int]]) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for group_name, count in state.get("groups", {}).items():
+        for idx in range(count):
+            payload.append({"name": f"{group_name}-{idx + 1}", "status": "Running"})
+    return payload
+
+
+def command_list(args: list[str]) -> int:
+    state = read_state()
+    instances = list_instances_json(state)
+    if "--format=json" in args:
+        sys.stdout.write(json.dumps(instances))
+        return 0
+    for instance in instances:
+        sys.stdout.write(f"{instance['name']}\n")
+    return 0
+
+
+def parse_flag(args: list[str], name: str, default_value: str) -> str:
+    if name not in args:
+        return default_value
+    idx = args.index(name)
+    if idx + 1 >= len(args):
+        return default_value
+    return args[idx + 1]
+
+
+def command_create(args: list[str]) -> int:
+    _ = parse_flag(args, "--build_target", "aosp_cf_x86_64_phone-android14-userdebug")
+    raw_count = parse_flag(args, "--num_instances", "1")
+    try:
+        count = max(0, int(raw_count))
+    except ValueError:
+        sys.stderr.write("invalid --num_instances value\n")
+        return 1
+    group_name = f"group_{uuid.uuid4().hex[:8]}"
+    state = read_state()
+    groups = state.setdefault("groups", {})
+    groups[group_name] = count
+    write_state(state)
+    sys.stdout.write("created\n")
+    sys.stdout.write(f"group: {group_name}\n")
+    return 0
+
+
+def command_stop(args: list[str]) -> int:
+    if len(args) == 0:
+        sys.stderr.write("group name is required\n")
+        return 1
+    group_name = args[0]
+    state = read_state()
+    groups = state.setdefault("groups", {})
+    groups.pop(group_name, None)
+    write_state(state)
+    sys.stdout.write(f"stopped: {group_name}\n")
+    return 0
+
+
+def main() -> int:
+    initialize_state_if_needed()
+    if len(sys.argv) < 2:
+        sys.stderr.write("usage: cvdr <command> [args]\n")
+        return 1
+
+    command = sys.argv[1]
+    args = sys.argv[2:]
+
+    if command == "list":
+        return command_list(args)
+    if command == "create":
+        return command_create(args)
+    if command == "stop":
+        return command_stop(args)
+
+    sys.stderr.write(f"unsupported command: {command}\n")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

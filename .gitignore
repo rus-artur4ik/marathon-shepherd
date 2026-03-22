@@ -12,3 +12,9 @@ local.properties
 *.class
 *.jar
 *.log
+__pycache__/
+
+# Ephemeral sandbox for external UI matrix runs
+.msh-sandbox/
+.msh-runner-venv/
+scripts/public_ui/apks/

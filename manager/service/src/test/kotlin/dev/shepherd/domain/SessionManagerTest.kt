@@ -1,16 +1,6 @@
 package dev.shepherd.domain
 
-import dev.shepherd.adapter.api.AdapterAccess
-import dev.shepherd.adapter.api.AdapterCapabilities
-import dev.shepherd.adapter.api.AdapterConnection
-import dev.shepherd.adapter.api.AdapterConnectionAuth
-import dev.shepherd.adapter.api.AdapterDeviceProfile
-import dev.shepherd.adapter.api.ACCESS_AUTH_NETWORK
-import dev.shepherd.adapter.api.ACCESS_EXPOSURE_DIRECT_TCP
-import dev.shepherd.adapter.api.ACCESS_PROTOCOL_ADB
-import dev.shepherd.adapter.api.ACCESS_TRANSPORT_TCP
-import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
-import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
+import dev.shepherd.adapter.api.*
 import dev.shepherd.domain.model.AdbServer
 import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.domain.provider.AcquireResult
@@ -21,10 +11,7 @@ import dev.shepherd.infra.state.StateStore
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNotNull
+import kotlin.test.*
 
 class SessionManagerTest {
 
@@ -114,6 +101,26 @@ class SessionManagerTest {
         assertEquals(0, physicalProvider.acquireCalls)
         assertEquals(1, emulatorProvider.acquireCalls)
         assertEquals(1, session.allocatedDevices)
+    }
+
+    @Test
+    fun `should reject unsupported requested device type`() = runTest {
+        val stateStore = StateStore(File(tempDir, "device-type-validation.db").absolutePath)
+        val sessionManager = SessionManager(
+            providerCatalog = FakeProviderCatalog(active = listOf(RecordingDeviceProvider(name = "rack-1"))),
+            stateStore = stateStore
+        )
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            sessionManager.createSession(
+                requestedDevices = 1,
+                apiLevel = "34",
+                ttlSeconds = 60,
+                deviceType = "tablet"
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("Unsupported deviceType 'tablet'"))
     }
 }
 

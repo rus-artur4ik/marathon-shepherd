@@ -1,0 +1,10 @@
+providers:
+  - name: "integration-adb"
+    url: "http://shepherd-adb:7037"
+    secret: "integration-secret-adb"
+  - name: "integration-farm"
+    url: "http://shepherd-farm:7037"
+    secret: "integration-secret-farm"
+  - name: "integration-cuttlefish"
+    url: "http://shepherd-cuttlefish:7037"
+    secret: "integration-secret-cuttlefish"

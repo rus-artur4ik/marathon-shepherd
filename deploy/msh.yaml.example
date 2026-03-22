@@ -1,16 +1,16 @@
 providers:
-  # Physical device rack running adapter-adb (module: adapter/adb)
+  # Physical device rack running shepherd-adb (module: adapter/shepherd-adb)
   # secret must match ADAPTER_SECRET on that host
   - name: "device-rack-1"
     url: "http://192.168.50.100:7037"
     secret: "your-strong-random-secret-here"
 
-  # Emulator farm running adapter-farm (module: adapter/farm-server)
+  # Emulator farm running shepherd-farm (module: adapter/shepherd-farm)
   # - name: "emu-farm-1"
   #   url: "http://192.168.50.110:7037"
   #   secret: "another-strong-secret"
 
-  # Cuttlefish host running adapter-cuttlefish (module: adapter/cuttlefish)
+  # Cuttlefish host running shepherd-cuttlefish (module: adapter/shepherd-cuttlefish)
   # - name: "cuttlefish-1"
   #   url: "http://192.168.50.120:7037"
   #   secret: "third-strong-secret"

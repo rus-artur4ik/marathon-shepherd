@@ -32,26 +32,27 @@ services:
     ports:
       - "5037:5037"
 
-  adapter-adb:
+  shepherd-adb:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.adapter-adb
-    image: ghcr.io/marathon-org/shepherd-adapter-adb:latest
-    container_name: shepherd-adapter-adb
+      dockerfile: deploy/Dockerfile.shepherd-adb
+    image: ghcr.io/marathon-org/shepherd-adb:latest
+    container_name: shepherd-adb
     networks:
       - shepherd-adb
     restart: unless-stopped
     environment:
-      ADAPTER_PORT: "8091"
+      ADAPTER_PORT: "7037"
       ADAPTER_ADB_HOST: "${HOST_IP:?HOST_IP must be set}"
       ADAPTER_ADB_PORT: "5037"
+      ADB_SERVER_SOCKET: "tcp:adb:5037"
       ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
     ports:
-      - "8091:8091"
+      - "7037:7037"
     depends_on:
       - adb
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8091/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
       interval: 30s
       timeout: 5s
       retries: 3

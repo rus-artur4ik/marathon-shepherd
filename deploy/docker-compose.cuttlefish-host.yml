@@ -16,12 +16,12 @@
 # Tip: keep port 6520 reachable only from trusted CI / Marathon runners.
 
 services:
-  adapter-cuttlefish:
+  shepherd-cuttlefish:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.adapter-cuttlefish
-    image: ghcr.io/marathon-org/shepherd-adapter-cuttlefish:latest
-    container_name: shepherd-adapter-cuttlefish
+      dockerfile: deploy/Dockerfile.shepherd-cuttlefish
+    image: ghcr.io/marathon-org/shepherd-cuttlefish:latest
+    container_name: shepherd-cuttlefish
     privileged: true
     devices:
       - /dev/kvm
@@ -30,17 +30,17 @@ services:
       - cuttlefish-home:/home/vsoc-01                  # persist CF runtime data
     restart: unless-stopped
     environment:
-      ADAPTER_PORT: "8093"
+      ADAPTER_PORT: "7037"
       ADAPTER_ADB_HOST: "${HOST_IP:?HOST_IP must be set}"
       ADAPTER_ADB_PORT: "6520"
       ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
       CVDR_PATH: "/usr/local/bin/cvdr"
       CVDR_LEASES_PATH: "/home/vsoc-01/msh-cuttlefish-leases.json"
     ports:
-      - "8093:8093"
+      - "7037:7037"
       - "6520:6520"     # Cuttlefish adb port
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8093/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
       interval: 30s
       timeout: 5s
       retries: 3

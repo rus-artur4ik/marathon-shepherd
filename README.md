@@ -23,7 +23,7 @@ Device orchestration layer for [Marathon](https://marathonlabs.github.io/maratho
  ┌─────────────┐  ┌───────────────┐  ┌───────────────────┐
  │ Device host │  │ Emulator host │  │  Cuttlefish host  │
  │             │  │               │  │                   │
- │ shepherd-adb│  │ shepherd-farm │  │  shepherd-cfish   │
+ │ shepherd-adb│  │ shepherd-farm │  │ shepherd-cuttlefish│
  │   :7037     │  │   :7037       │  │    :7037          │
  │             │  │               │  │                   │
  │ adb-server  │  │ farm-server   │  │  cvdr             │
@@ -446,19 +446,118 @@ docker compose logs -f
 ./gradlew :manager:cli:installDist       # mshctl
 
 docker build -f deploy/Dockerfile                    -t shepherd-manager .
-docker build -f deploy/Dockerfile.adapter-adb        -t shepherd-adb .
-docker build -f deploy/Dockerfile.adapter-farm       -t shepherd-farm .
-docker build -f deploy/Dockerfile.adapter-cuttlefish -t shepherd-cuttlefish .
+docker build -f deploy/Dockerfile.shepherd-adb        -t shepherd-adb .
+docker build -f deploy/Dockerfile.shepherd-farm       -t shepherd-farm .
+docker build -f deploy/Dockerfile.shepherd-cuttlefish -t shepherd-cuttlefish .
 ```
+
+## Integration Testing
+
+Run end-to-end scenarios from the repository root.
+
+### Unified runner
+
+```bash
+./scripts/run_tests.sh
+```
+
+Console mode behavior:
+- without `--console=plain`: `scripts/run_tests.sh` renders a Python `rich` dashboard in TTY mode
+- the dashboard shows test configuration, prerequisite statuses, stage progress, and the last 10 log lines of the active stage
+- with `--console=plain`: logs stay backend-friendly and deterministic (timestamps + plain text)
+- Gradle runs with `--continue` by default; use `--fail-fast` (or `--no-continue`) to stop on the first failing Gradle task
+- for the interactive dashboard, install the local runner dependency once:
+
+```bash
+python3 -m venv .msh-runner-venv
+.msh-runner-venv/bin/python -m pip install -r scripts/requirements_runner.txt
+```
+
+Core stages always run:
+- `./gradlew test`
+- `scripts/integration/console.sh`
+
+Environment-dependent stages:
+- Docker integration runs by default, skip via `--skip-docker-integration`
+- Docker compose build/start logs are dynamic in interactive mode and compact in plain-log mode; force live compose output with `MSH_VERBOSE_DOCKER_COMPOSE=true`
+- Real-device integration also runs by default, skip via `--skip-real-device-integration`
+- `--skip-environment-integration` (both flags above)
+- `--skip-jenkins-harness` (skips Groovy Jenkins harness scenarios inside integration scripts)
+- `--fail-fast` / `--no-continue` (disables default Gradle `--continue`)
+
+Real-device stage tuning:
+- `MSH_REAL_DEVICE_MANAGER_URL` (default: `${MSH_URL}` or `http://localhost:6037`)
+- `MSH_REAL_DEVICE_REQUESTED_DEVICES` (default: `1`)
+- `MSH_REAL_DEVICE_API_LEVEL` (default: `34`)
+- `MSH_REAL_DEVICE_TTL_SECONDS` (default: `120`)
+- `MSH_REAL_DEVICE_TYPE` (`physical` or `emulator`, default: `physical`)
+
+### Console mode (no Docker Compose, isolated temp state)
+
+```bash
+./gradlew :manager:service:installDist
+scripts/integration/console.sh
+```
+
+What it validates:
+- manager API session lifecycle (create/release)
+- request validation (`deviceType`)
+- targeted cuttlefish allocation path (`apiLevel=35`) when cuttlefish inventory is available
+- Jenkins shared-library step (`vars/shepherdTest.groovy`) through a local Groovy harness
+- no writes to default `~/.msh` state path
+
+### Docker Compose mode (manager + real adapters)
+
+```bash
+scripts/integration/docker_compose.sh
+```
+
+What it validates:
+- manager + all real adapters wiring in containers (`shepherd-adb`, `shepherd-farm`, `shepherd-cuttlefish`)
+- backend integration for adapter dependencies (`adb` daemon, farm-server contract service, cvdr command contract)
+- successful + partial emulator allocations and physical-capacity behavior
+- targeted cuttlefish allocation path (`apiLevel=35`) when cuttlefish inventory is available (otherwise explicitly skipped with reason)
+- release semantics
+- Jenkins shared-library step in containerized topology
+
+### Jenkins shared-library harness only
+
+```bash
+MSH_URL=http://localhost:6037 groovy scripts/integration/jenkins_harness.groovy
+```
+
+### Public pinned UI sample
+
+```bash
+scripts/public_ui/build_test_apk.sh
+scripts/public_ui/run_tests.sh
+```
+
+What it does:
+- stores the pinned `android/architecture-samples` APK artifacts under `scripts/public_ui/apks/`
+- prefers a running emulator and otherwise starts the default AVD (`Pixel_3a_API_34`) for the UI run
+- `scripts/public_ui/build_test_apk.sh` clones the pinned repo, builds `debug` + `androidTest` APKs, and copies only the final artifacts plus metadata into `scripts/public_ui/apks/`
+- `scripts/public_ui/run_tests.sh` installs the prebuilt APKs via `adb` and runs instrumentation directly via `am instrument`
+- keeps Android user home, temp files, and logs inside the per-run sandbox under `.msh-sandbox/`
+- keeps the sample repository and Gradle state only inside the per-run sandbox during APK preparation
+- fails fast with a clear prerequisite error if the prebuilt APKs are missing
+- removes the per-run sandbox directory on exit and removes `.msh-sandbox/` as well when it becomes empty
+- uninstalls packages that were added during the connected-test suite
+- shuts down the emulator if it was started by the script
+
+Pinned repository:
+- `android/architecture-samples` @ `ee66e1526b84c026615df032c705842b7d2a521f`
+
+This runs the same `shepherdTest(...)` flow as Jenkins and asserts that no active sessions remain after cleanup.
 
 ## Project Structure
 
 ```
 adapter/
   api/          Shared adapter contract, auth, server bootstrap
-  adb/          Physical-device adapter (shepherd-adb)
-  farm-server/  Emulator adapter (shepherd-farm)
-  cuttlefish/   Cuttlefish/CVDR adapter (shepherd-cuttlefish)
+  shepherd-adb/         Physical-device adapter (shepherd-adb)
+  shepherd-farm/        Emulator adapter (shepherd-farm)
+  shepherd-cuttlefish/  Cuttlefish/CVDR adapter (shepherd-cuttlefish)
 manager/
   service/      REST API, session lifecycle, SQLite state
   cli/          mshctl operator CLI

@@ -1,17 +1,21 @@
 package dev.shepherd.domain
 
+import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
+import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
 import dev.shepherd.domain.model.Session
-import dev.shepherd.domain.model.SessionStatus.FAILED
 import dev.shepherd.domain.model.SessionStatus
+import dev.shepherd.domain.model.SessionStatus.FAILED
 import dev.shepherd.domain.provider.ProviderCatalog
 import dev.shepherd.infra.state.StateStore
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.time.Instant
-import java.util.UUID
+import java.util.*
 
 private const val RELEASE_TIMEOUT_MS = 10_000L
+private val SUPPORTED_DEVICE_TYPES: Set<String> = linkedSetOf(DEVICE_TYPE_PHYSICAL, DEVICE_TYPE_EMULATOR)
+private const val SUPPORTED_DEVICE_TYPES_TEXT = "physical, emulator"
 
 class SessionManager(
     private val providerCatalog: ProviderCatalog,
@@ -27,12 +31,19 @@ class SessionManager(
     ): Session {
         require(requestedDevices > 0) { "Requested devices must be greater than zero" }
         require(ttlSeconds > 0) { "Session TTL must be greater than zero" }
+        val normalizedDeviceType: String? = deviceType
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            ?.takeIf { value -> value.isNotEmpty() }
+        require(normalizedDeviceType == null || normalizedDeviceType in SUPPORTED_DEVICE_TYPES) {
+            "Unsupported deviceType '$deviceType'. Supported values: $SUPPORTED_DEVICE_TYPES_TEXT"
+        }
 
         val sessionId = "sess_${UUID.randomUUID().toString().take(8)}"
         val now = Instant.now()
         val expiresAt = now.plusSeconds(ttlSeconds)
         val providers = providerCatalog.activeProviders()
-            .filter { provider -> deviceType == null || provider.supportsDeviceType(deviceType) }
+            .filter { provider -> normalizedDeviceType == null || provider.supportsDeviceType(normalizedDeviceType) }
 
         val pendingSession = Session(
             id = sessionId,
