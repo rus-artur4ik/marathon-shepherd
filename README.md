@@ -20,22 +20,22 @@ Device orchestration layer for [Marathon](https://marathonlabs.github.io/maratho
  └──────┬───────────────┬──────────────┬─────┘
         │ HTTP :7037    │ HTTP :7037   │ HTTP :7037
         ▼               ▼              ▼
- ┌─────────────┐  ┌───────────────┐  ┌───────────────────┐
- │ Device host │  │ Emulator host │  │  Cuttlefish host  │
- │             │  │               │  │                   │
- │ shepherd-adb│  │ shepherd-farm │  │ shepherd-cuttlefish│
- │   :7037     │  │   :7037       │  │    :7037          │
- │             │  │               │  │                   │
- │ adb-server  │  │ farm-server   │  │  cvdr             │
- │   :5037     │  │   :5037       │  │  instances :6520  │
- │ USB devices │  │  emulators    │  │  (KVM required)   │
- └──────┬──────┘  └──────┬────────┘  └──────────┬────────┘
-        │ ADB :5037      │ ADB :5037           │ ADB :6520
-        └────────────────┴─────────────────────┘
+ ┌─────────────┐  ┌───────────────┐  ┌──────────────────────┐
+ │ Device host │  │ Emulator host │  │  Cuttlefish host     │
+ │             │  │               │  │                      │
+ │ shepherd-adb│  │ shepherd-farm │  │  shepherd-cuttlefish │
+ │   :7037     │  │   :7037       │  │    :7037             │
+ │             │  │               │  │                      │
+ │ adb-server  │  │ farm-server   │  │  cvdr                │
+ │   :5037     │  │   :5037       │  │  instances :6520     │
+ │ USB devices │  │  emulators    │  │  (KVM required)      │
+ └──────┬──────┘  └──────┬────────┘  └──────────┬───────────┘
+        │ ADB :5037      │ ADB :5037            │ ADB :6520
+        └────────────────┴──────────────────────┘
               marathon runner connects here
 ```
 
-**Session lifecycle:** `create → PENDING → acquire leases from providers → READY`. On release or TTL expiry, all leases are rolled back automatically. The manager returns `adbServers` — your CI layer constructs the Marathonfile.
+**Session lifecycle:** `create → PENDING → acquire leases from providers → READY`. On release or TTL expiry, all leases are rolled back automatically. The manager returns `adbServers` — for `shepherd-adb` these are lease-scoped proxy ports, not a shared rack-wide adb daemon.
 
 ## Prerequisites
 
@@ -54,6 +54,8 @@ Build and run everything locally without Docker.
 providers:
   - name: "device-rack-1"
     url: "http://192.168.1.10:7037"
+    # Optional only when direct ADB access must use another host
+    # accessHost: "192.168.1.11"
     secret: "change-me"   # must match ADAPTER_SECRET on that host
 ```
 
@@ -97,6 +99,8 @@ Docker images are published to DockerHub. No repo clone needed — just create c
 providers:
   - name: "device-rack-1"
     url: "http://192.168.1.10:7037"
+    # Optional only when direct ADB access must use another host
+    # accessHost: "192.168.1.11"
     secret: "change-me"   # must match ADAPTER_SECRET on that host
 ```
 
@@ -105,7 +109,7 @@ providers:
 ```yaml
 services:
   manager:
-    image: YOUR_USER/shepherd-manager:latest
+    image: rusartur4ik/marathon-shepherd:latest
     container_name: shepherd-manager
     restart: unless-stopped
     volumes:
@@ -114,7 +118,7 @@ services:
     ports:
       - "6037:6037"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:6037/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/live"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -127,7 +131,7 @@ volumes:
 
 ```bash
 docker compose up -d
-curl -sf http://localhost:6037/health
+curl -sf http://localhost:6037/live
 ```
 
 Reload config at runtime without restart:
@@ -142,12 +146,17 @@ Each adapter runs on its own host alongside the devices it manages. Pick the rig
 
 **Physical devices (shepherd-adb)**
 
+Manager uses the provider `url` host from `msh.yaml` as the default adb host. No adapter-side host override is required. `shepherd-adb` allocates per-device leases and exposes each leased physical device through its own session-scoped adb proxy port.
+
 **1. Create `docker-compose.yml` on the device host:**
 
 ```yaml
 networks:
   shepherd:
     driver: bridge
+
+volumes:
+  shepherd-adb-state:
 
 services:
   adb:
@@ -163,19 +172,24 @@ services:
       - shepherd
     restart: unless-stopped
     ports:
-      - "5037:5037"
+      - "5038:5037"
 
   shepherd-adb:
-    image: YOUR_USER/shepherd-adb:latest
+    image: rusartur4ik/shepherd-adb:latest
     container_name: shepherd-adb
     networks:
       - shepherd
     restart: unless-stopped
     environment:
-      ADAPTER_ADB_HOST: "192.168.1.10"   # this host's LAN IP, reachable by marathon
+      ADAPTER_ADB_PORT: "5038"          # upstream adb daemon published on the host
+      ADB_PROXY_PORT_RANGE: "7600-7699" # lease-scoped adb proxy ports published to Marathon / CI
+      ADB_LEASES_PATH: "/var/lib/msh/adb-leases.json"
       ADAPTER_SECRET: "change-me"        # must match secret in msh.yaml
+    volumes:
+      - shepherd-adb-state:/var/lib/msh
     ports:
       - "7037:7037"
+      - "7600-7699:7600-7699"
     depends_on:
       - adb
 ```
@@ -190,6 +204,10 @@ curl -sf http://192.168.1.10:7037/health
 ---
 
 **Emulator farm (shepherd-farm)**
+
+By default, manager publishes the host from `provider.url`. Use `accessHost` in `msh.yaml` only when direct ADB access lives on another host than the adapter itself.
+
+For `shepherd-adb`, Marathon never talks to the shared upstream adb daemon directly. Each allocated physical device gets its own lease-scoped proxy port from `ADB_PROXY_PORT_RANGE`, and the session response contains those ports in `adbServers`.
 
 **1. Create `docker-compose.yml` on the emulator host:**
 
@@ -206,7 +224,7 @@ services:
       - shepherd
     restart: unless-stopped
     ports:
-      - "5037:5037"
+      - "5038:5037"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
@@ -214,14 +232,14 @@ services:
       start_period: 60s
 
   shepherd-farm:
-    image: YOUR_USER/shepherd-farm:latest
+    image: rusartur4ik/shepherd-farm:latest
     container_name: shepherd-farm
     networks:
       - shepherd
     restart: unless-stopped
     environment:
       FARM_SERVER_HOST: "farm-server"
-      ADAPTER_ADB_HOST: "192.168.1.20"   # this host's LAN IP
+      ADAPTER_ADB_PORT: "5038"   # published host adb port for CI / Marathon
       ADAPTER_SECRET: "change-me"
     ports:
       - "7037:7037"
@@ -240,12 +258,14 @@ docker compose up -d
 
 **Cuttlefish (shepherd-cuttlefish)**
 
+By default, manager publishes the host from `provider.url`. Use `accessHost` in `msh.yaml` only when direct device access lives on another host.
+
 **1. Create `docker-compose.yml` on the Cuttlefish host:**
 
 ```yaml
 services:
   shepherd-cuttlefish:
-    image: YOUR_USER/shepherd-cuttlefish:latest
+    image: rusartur4ik/shepherd-cuttlefish:latest
     container_name: shepherd-cuttlefish
     privileged: true
     devices:
@@ -255,7 +275,6 @@ services:
       - cuttlefish-home:/home/vsoc-01
     restart: unless-stopped
     environment:
-      ADAPTER_ADB_HOST: "192.168.1.30"   # this host's LAN IP
       ADAPTER_ADB_PORT: "6520"
       ADAPTER_SECRET: "change-me"
       CVDR_PATH: "/usr/local/bin/cvdr"
@@ -286,7 +305,8 @@ docker compose up -d
 | `GET` | `/api/v1/sessions/{id}` | Get session |
 | `DELETE` | `/api/v1/sessions/{id}` | Release session |
 | `GET` | `/api/v1/devices` | Aggregate provider inventory |
-| `GET` | `/health` | Manager + provider health |
+| `GET` | `/live` | Manager process liveness |
+| `GET` | `/health` | Manager readiness + provider health |
 | `GET` | `/api/v1/config` | Active config |
 | `PUT` | `/api/v1/config` | Update config (409 if a removed provider has active sessions) |
 | `POST` | `/api/v1/config/reload` | Reload config from disk |
@@ -312,7 +332,7 @@ docker compose up -d
   "status": "READY",
   "requestedDevices": 3,
   "allocatedDevices": 3,
-  "adbServers": [{ "host": "192.168.1.10", "port": 5037 }],
+  "adbServers": [{ "host": "192.168.1.10", "port": 7600 }],
   "createdAt": "2026-01-01T12:00:00Z",
   "expiresAt": "2026-01-01T13:00:00Z"
 }
@@ -343,7 +363,7 @@ Shepherd returns `adbServers` for Marathon's `vendorConfiguration`. Construct th
 | Emulator testing (ADB) | ✓ |
 | Cuttlefish (ADB on :6520) | ✓ |
 | Multi-host allocation | ✓ |
-| API-level targeting | ✓ (homogeneous racks for physical, selective for farm/cuttlefish) |
+| API-level targeting | ✓ (selective for physical, farm, and cuttlefish) |
 | Filter by device type per session | ✓ (`deviceType: "physical"` / `"emulator"`) |
 
 ## Configuration
@@ -354,10 +374,14 @@ Shepherd returns `adbServers` for Marathon's `vendorConfiguration`. Construct th
 providers:
   - name: "device-rack-1"
     url: "http://192.168.1.10:7037"
+    # Optional only when direct device access must use another host
+    # accessHost: "192.168.1.11"
     secret: "strong-random-secret"         # openssl rand -hex 32
 
   - name: "emu-farm-1"
     url: "http://192.168.1.20:7037"
+    # Example: when farm-server publishes adb on another host
+    # accessHost: "192.168.1.21"
     secret: "another-secret"
 ```
 
@@ -369,17 +393,27 @@ providers:
 | `MSH_PORT` | `6037` | HTTP port |
 | `MSH_DATA_DIR` | `~/.msh` | SQLite state directory |
 
+Provider config note:
+- `accessHost` is optional.
+- If omitted, manager uses the host part of `provider.url` when constructing `adbServers`.
+- Set it only when the direct device-access endpoint lives on another host than the adapter control plane.
+
 ### Adapter environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ADAPTER_PORT` | `7037` | HTTP port |
-| `ADAPTER_ADB_HOST` | **required** | ADB host published to Marathon |
-| `ADAPTER_ADB_PORT` | `5037` / `6520` | ADB port published to Marathon |
+| `ADAPTER_ADB_PORT` | `5037` / `6520` | Upstream adb daemon port used by adapters that proxy or expose adb |
 | `ADAPTER_SECRET` | _(blank = no auth)_ | Bearer token; blank for local dev only |
+
+Recommendation:
+- For dockerized `shepherd-adb` and `shepherd-farm` hosts, publish the upstream adb daemon on host port `5038` and set `ADAPTER_ADB_PORT=5038`.
+- Keep the container-internal adb daemon on `5037`; only the host-facing published port changes.
 
 | Variable | Adapter | Default | Description |
 |----------|---------|---------|-------------|
+| `ADB_LEASES_PATH` | adb | `~/.msh/adb-leases.json` | Persistent physical-device lease state |
+| `ADB_PROXY_PORT_RANGE` | adb | _(ephemeral)_ | Lease-scoped adb proxy ports that must be reachable by Marathon |
 | `FARM_SERVER_HOST` | farm | `127.0.0.1` | Local farm-server host |
 | `FARM_SERVER_PORT` | farm | `8080` | Local farm-server port |
 | `FARM_SUPPORTED_API_LEVELS` | farm | _(all)_ | Comma-separated, e.g. `33,34,35` |
@@ -417,6 +451,7 @@ shepherdTest(
 
 ```bash
 # Manager
+curl -sf http://localhost:6037/live | jq
 curl -sf http://localhost:6037/health | jq
 mshctl health && mshctl devices
 
@@ -430,11 +465,12 @@ docker compose logs -f
 
 | Symptom | Check |
 |---------|-------|
+| Manager started, but adapters are not connected yet | `/live` should be `200`; `/health` will stay `503` until at least one provider is healthy |
 | `401` from adapter | `msh.yaml` secret vs `ADAPTER_SECRET` on the adapter host |
 | Provider unhealthy, manager healthy | Adapter logs, adapter `/health`, firewall |
 | Session `FAILED`, 0 devices | `mshctl devices` — pool available? API level match? |
 | Physical rack never satisfies `apiLevel` | All devices on the rack must share the same API level |
-| Marathon can't reach devices | ADB port (`5037`/`6520`) must be reachable from the marathon runner |
+| Marathon can't reach devices | For `shepherd-adb`, publish `ADB_PROXY_PORT_RANGE`; for farm/cuttlefish, expose the advertised adb port |
 
 ## Building
 
@@ -445,10 +481,15 @@ docker compose logs -f
 ./gradlew :manager:service:installDist   # run locally
 ./gradlew :manager:cli:installDist       # mshctl
 
-docker build -f deploy/Dockerfile                    -t shepherd-manager .
-docker build -f deploy/Dockerfile.shepherd-adb        -t shepherd-adb .
-docker build -f deploy/Dockerfile.shepherd-farm       -t shepherd-farm .
-docker build -f deploy/Dockerfile.shepherd-cuttlefish -t shepherd-cuttlefish .
+docker build -f deploy/Dockerfile                     -t rusartur4ik/marathon-shepherd:latest .
+docker build -f deploy/Dockerfile.shepherd-adb        -t rusartur4ik/shepherd-adb:latest .
+docker build -f deploy/Dockerfile.shepherd-farm       -t rusartur4ik/shepherd-farm:latest .
+docker build -f deploy/Dockerfile.shepherd-cuttlefish -t rusartur4ik/shepherd-cuttlefish:latest .
+
+docker push rusartur4ik/marathon-shepherd:latest
+docker push rusartur4ik/shepherd-adb:latest
+docker push rusartur4ik/shepherd-farm:latest
+docker push rusartur4ik/shepherd-cuttlefish:latest
 ```
 
 ## Integration Testing
@@ -463,7 +504,7 @@ Run end-to-end scenarios from the repository root.
 
 Console mode behavior:
 - without `--console=plain`: `scripts/run_tests.sh` renders a Python `rich` dashboard in TTY mode
-- the dashboard shows test configuration, prerequisite statuses, stage progress, and the last 10 log lines of the active stage
+- the dashboard shows test configuration, prerequisite statuses, stage progress, and the last 15 log lines of the active stage
 - with `--console=plain`: logs stay backend-friendly and deterministic (timestamps + plain text)
 - Gradle runs with `--continue` by default; use `--fail-fast` (or `--no-continue`) to stop on the first failing Gradle task
 - for the interactive dashboard, install the local runner dependency once:
@@ -492,6 +533,29 @@ Real-device stage tuning:
 - `MSH_REAL_DEVICE_TTL_SECONDS` (default: `120`)
 - `MSH_REAL_DEVICE_TYPE` (`physical` or `emulator`, default: `physical`)
 
+### Smoke — published Docker images
+
+Tests each adapter image and the manager image independently. Green = published images start, enforce auth, and satisfy their API contracts.
+
+```bash
+scripts/integration/smoke_docker.sh
+```
+
+What it validates per image:
+- `shepherd-adb` — `/health` public; `/status` requires Bearer; `/acquire` returns 503 with no USB devices; capabilities advertise `physical`
+- `shepherd-farm` — `/health` healthy; `/acquire` allocates from harness and returns `leaseId`; `/release` restores pool count
+- `shepherd-cuttlefish` — same acquire/release cycle using the cvdr harness
+- manager — `/live`, `/health` (all 3 providers HEALTHY), session POST/GET/DELETE, `?status=` filter, config endpoint
+
+Override images to test a specific tag:
+```bash
+MSH_MANAGER_IMAGE=rusartur4ik/marathon-shepherd:v1.2 \
+MSH_SHEPHERD_ADB_IMAGE=rusartur4ik/shepherd-adb:v1.2 \
+MSH_SHEPHERD_FARM_IMAGE=rusartur4ik/shepherd-farm:v1.2 \
+MSH_SHEPHERD_CUTTLEFISH_IMAGE=rusartur4ik/shepherd-cuttlefish:v1.2 \
+scripts/integration/smoke_docker.sh
+```
+
 ### Console mode (no Docker Compose, isolated temp state)
 
 ```bash
@@ -506,7 +570,7 @@ What it validates:
 - Jenkins shared-library step (`vars/shepherdTest.groovy`) through a local Groovy harness
 - no writes to default `~/.msh` state path
 
-### Docker Compose mode (manager + real adapters)
+### Docker Compose mode (manager + real adapters, locally built images)
 
 ```bash
 scripts/integration/docker_compose.sh
@@ -520,35 +584,49 @@ What it validates:
 - release semantics
 - Jenkins shared-library step in containerized topology
 
+### End-to-end APK test (requires connected device)
+
+Full system test: Shepherd allocates a real device, APKs are installed and run **through the session-scoped ADB proxy**, instrumentation passes, session is released. Green = the complete production flow works.
+
+```bash
+./gradlew :manager:service:installDist :adapter:shepherd-adb:installDist
+scripts/integration/e2e_apk.sh
+```
+
+What it validates:
+- manager + shepherd-adb start and become healthy
+- session allocation returns a valid ADB proxy endpoint
+- Shepherd proxy exposes exactly 1 device (lease isolation)
+- `adb install` and `am instrument` work through the proxy port
+- `android/architecture-samples` instrumentation tests pass on the connected device
+- session release clears all active sessions
+
+Requires: physical device or running emulator connected via `adb devices`. API level is auto-detected from the device. Pinned APKs are at `scripts/public_ui/apks/`.
+
+Optional env vars: `ADB_SERIAL` (force a specific device), `MSH_E2E_TTL` (session TTL in seconds, default 300).
+
 ### Jenkins shared-library harness only
 
 ```bash
 MSH_URL=http://localhost:6037 groovy scripts/integration/jenkins_harness.groovy
 ```
 
-### Public pinned UI sample
+### Public pinned UI sample (direct ADB, no Shepherd)
+
+Runs the same instrumentation suite but connects directly to ADB, bypassing Shepherd. Useful for verifying APKs and device state independently.
 
 ```bash
-scripts/public_ui/build_test_apk.sh
-scripts/public_ui/run_tests.sh
+scripts/public_ui/build_test_apk.sh   # build APKs once (clones repo, builds, caches)
+scripts/public_ui/run_tests.sh        # install + am instrument directly via adb
 ```
 
-What it does:
-- stores the pinned `android/architecture-samples` APK artifacts under `scripts/public_ui/apks/`
-- prefers a running emulator and otherwise starts the default AVD (`Pixel_3a_API_34`) for the UI run
-- `scripts/public_ui/build_test_apk.sh` clones the pinned repo, builds `debug` + `androidTest` APKs, and copies only the final artifacts plus metadata into `scripts/public_ui/apks/`
-- `scripts/public_ui/run_tests.sh` installs the prebuilt APKs via `adb` and runs instrumentation directly via `am instrument`
-- keeps Android user home, temp files, and logs inside the per-run sandbox under `.msh-sandbox/`
-- keeps the sample repository and Gradle state only inside the per-run sandbox during APK preparation
-- fails fast with a clear prerequisite error if the prebuilt APKs are missing
-- removes the per-run sandbox directory on exit and removes `.msh-sandbox/` as well when it becomes empty
-- uninstalls packages that were added during the connected-test suite
-- shuts down the emulator if it was started by the script
+Pinned repository: `android/architecture-samples` @ `ee66e1526b84c026615df032c705842b7d2a521f`
 
-Pinned repository:
-- `android/architecture-samples` @ `ee66e1526b84c026615df032c705842b7d2a521f`
+## Roadmap
 
-This runs the same `shepherdTest(...)` flow as Jenkins and asserts that no active sessions remain after cleanup.
+Track planned work in GitHub Issues:
+
+- [github.com/rus-artur4ik/marathon-shepherd/issues](https://github.com/rus-artur4ik/marathon-shepherd/issues)
 
 ## Project Structure
 

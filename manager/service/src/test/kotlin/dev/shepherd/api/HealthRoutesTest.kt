@@ -7,12 +7,12 @@ import dev.shepherd.domain.provider.FakeDeviceProvider
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.state.StateStore
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.testing.testApplication
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.server.testing.*
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -23,6 +23,35 @@ class HealthRoutesTest {
 
     @TempDir
     lateinit var tempDir: File
+
+    @Test
+    fun `should return liveness even without healthy providers`() = testApplication {
+        val configFile = File(tempDir, "config-live.yaml")
+        configFile.writeText("providers: []")
+
+        val configStore = ConfigStore(configFile.absolutePath)
+        val stateStore = StateStore(File(tempDir, "test-live.db").absolutePath)
+        val httpClient = HttpClient(CIO)
+        val providerRegistry = ProviderRegistry(configStore, httpClient) { providerConfig, _ ->
+            FakeDeviceProvider(name = providerConfig.name, totalDevices = 0)
+        }
+        val deviceAllocator = DeviceAllocator(providerRegistry)
+        val sessionManager = SessionManager(providerRegistry, stateStore)
+
+        try {
+            application { configureServer(sessionManager, deviceAllocator, providerRegistry) }
+
+            val response = client.get("/live")
+            val body = response.bodyAsText()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertContains(body, "\"status\"")
+            assertContains(body, "alive")
+            assertContains(body, "\"version\"")
+        } finally {
+            httpClient.close()
+        }
+    }
 
     @Test
     fun `should return health status with provider info`() = testApplication {

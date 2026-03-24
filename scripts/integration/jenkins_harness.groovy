@@ -118,7 +118,8 @@ String sessionsBody = runtime.sh(
     returnStdout: true
 ) as String
 List sessions = new JsonSlurperClassic().parseText(sessionsBody) as List
-if (!sessions.isEmpty()) {
-    throw new RuntimeException("Expected no active sessions after cleanup, got: ${sessions}")
+List activeSessions = sessions.findAll { it.status in ["READY", "PENDING"] }
+if (!activeSessions.isEmpty()) {
+    throw new RuntimeException("Expected no active sessions after cleanup, got: ${activeSessions}")
 }
 println("Harness assertions passed. Sessions are cleaned up.")

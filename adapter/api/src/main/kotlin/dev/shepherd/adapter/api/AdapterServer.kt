@@ -1,12 +1,12 @@
 package dev.shepherd.adapter.api
 
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.callloging.CallLogging
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.routing.routing
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.application.*
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory
  */
 data class AdapterEnv(
     val port: Int,
-    val advertisedAdbHost: String,
     val advertisedAdbPort: Int,
     val secret: String,
     val accessMode: String,
@@ -29,8 +28,6 @@ data class AdapterEnv(
         fun fromEnvironment(defaultPort: Int, defaultAdbPort: Int = 5037): AdapterEnv {
             return AdapterEnv(
                 port = System.getenv("ADAPTER_PORT")?.toIntOrNull() ?: defaultPort,
-                advertisedAdbHost = System.getenv("ADAPTER_ADB_HOST")
-                    ?: error("ADAPTER_ADB_HOST must be set (e.g. the host's LAN IP)"),
                 advertisedAdbPort = System.getenv("ADAPTER_ADB_PORT")?.toIntOrNull() ?: defaultAdbPort,
                 secret = System.getenv("ADAPTER_SECRET").orEmpty(),
                 accessMode = System.getenv("ADAPTER_ACCESS_MODE").orEmpty().ifBlank { ACCESS_EXPOSURE_DIRECT_TCP },
@@ -40,7 +37,7 @@ data class AdapterEnv(
         }
     }
 
-    fun buildDefaultAccess(adapterType: String): AdapterAccess {
+    fun buildDefaultAccess(adapterType: String, requestHost: String): AdapterAccess {
         val connectionId: String = "$adapterType-primary-adb"
         return AdapterAccess(
             preferredConnectionId = connectionId,
@@ -49,7 +46,7 @@ data class AdapterEnv(
                     id = connectionId,
                     protocol = ACCESS_PROTOCOL_ADB,
                     transport = ACCESS_TRANSPORT_TCP,
-                    host = advertisedAdbHost,
+                    host = requestHost,
                     port = advertisedAdbPort,
                     exposure = accessMode,
                     auth = AdapterConnectionAuth(type = accessAuthType),
@@ -72,7 +69,7 @@ fun startAdapterServer(handler: AdapterHandler, env: AdapterEnv) {
     val logger = LoggerFactory.getLogger("dev.shepherd.adapter.${handler.adapterType}")
     logger.info(
         "Starting ${handler.adapterType} adapter on port ${env.port}, " +
-            "advertising ${env.accessMode} adb access at ${env.advertisedAdbHost}:${env.advertisedAdbPort}"
+            "advertising ${env.accessMode} adb access on request-derived host:${env.advertisedAdbPort}"
     )
     if (!env.authEnabled) logger.warn("ADAPTER_SECRET is not set — running WITHOUT authentication")
 

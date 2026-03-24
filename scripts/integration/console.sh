@@ -21,7 +21,6 @@ ADB_ADAPTER_PID=""
 FARM_ADAPTER_PID=""
 CUTTLEFISH_ADAPTER_PID=""
 MANAGER_PID=""
-HARNESS_LOG_FILE=""
 SESSION_ID_EMULATOR=""
 SESSION_ID_EMULATOR_PARTIAL=""
 SESSION_ID_PHYSICAL=""
@@ -87,9 +86,6 @@ log_step "Checking prerequisites"
 require_command python3
 require_command curl
 require_command adb
-if [[ "${MSH_SKIP_JENKINS_HARNESS:-false}" != "true" ]]; then
-    require_command groovy
-fi
 
 if [[ ! -x "${MANAGER_BIN}" ]]; then
     fail "Manager binary is missing. Build once with: ./gradlew :manager:service:installDist"
@@ -112,10 +108,7 @@ fi
 
 TMP_ROOT="$(mktemp -d)"
 STATE_DIR="${TMP_ROOT}/state"
-WORKSPACE_DIR="${TMP_ROOT}/workspace"
-mkdir -p "${STATE_DIR}" "${WORKSPACE_DIR}"
-HARNESS_LOG_FILE="${TMP_ROOT}/jenkins-harness.log"
-
+mkdir -p "${STATE_DIR}"
 MANAGER_PORT="$(find_free_port)"
 ADB_SERVER_PORT="$(find_free_port)"
 ADB_ADAPTER_PORT="$(find_free_port)"
@@ -172,7 +165,6 @@ fi
 
 log_step "Starting real adapter binaries (adb + farm + cuttlefish)"
 ADAPTER_PORT="${ADB_ADAPTER_PORT}" \
-ADAPTER_ADB_HOST="127.0.0.1" \
 ADAPTER_ADB_PORT="${ADB_SERVER_PORT}" \
 ADAPTER_SECRET="integration-secret-adb" \
 ADB_SERVER_PORT="${ADB_SERVER_PORT}" \
@@ -180,7 +172,6 @@ ADB_SERVER_PORT="${ADB_SERVER_PORT}" \
 ADB_ADAPTER_PID="$!"
 
 ADAPTER_PORT="${FARM_ADAPTER_PORT}" \
-ADAPTER_ADB_HOST="127.0.0.1" \
 ADAPTER_ADB_PORT="5037" \
 ADAPTER_SECRET="integration-secret-farm" \
 FARM_SERVER_HOST="127.0.0.1" \
@@ -190,7 +181,6 @@ FARM_SUPPORTED_API_LEVELS="34" \
 FARM_ADAPTER_PID="$!"
 
 ADAPTER_PORT="${CUTTLEFISH_ADAPTER_PORT}" \
-ADAPTER_ADB_HOST="127.0.0.1" \
 ADAPTER_ADB_PORT="6520" \
 ADAPTER_SECRET="integration-secret-cuttlefish" \
 CVDR_PATH="${CVDR_SCRIPT}" \
@@ -311,31 +301,7 @@ if [[ -n "${SESSION_ID_CUTTLEFISH}" ]]; then
 fi
 log_success "Release endpoints confirmed"
 
-if [[ "${MSH_SKIP_JENKINS_HARNESS:-false}" == "true" ]]; then
-    log_step "Scenario 8: Jenkins shared-library harness in console mode (skipped)"
-    log_skip "Skipped because MSH_SKIP_JENKINS_HARNESS=true"
-else
-    log_step "Scenario 8: Jenkins shared-library harness in console mode"
-    if [[ "${MSH_LOG_MODE:-plain}" == "dynamic" ]]; then
-        if ! (
-            cd "${REPO_ROOT}"
-            MSH_URL="${MANAGER_URL}" MSH_HARNESS_WORKSPACE="${WORKSPACE_DIR}" \
-                groovy scripts/integration/jenkins_harness.groovy
-        ) >"${HARNESS_LOG_FILE}" 2>&1; then
-            cat "${HARNESS_LOG_FILE}" || true
-            fail "Jenkins harness failed in console mode"
-        fi
-    else
-        (
-            cd "${REPO_ROOT}"
-            MSH_URL="${MANAGER_URL}" MSH_HARNESS_WORKSPACE="${WORKSPACE_DIR}" \
-                groovy scripts/integration/jenkins_harness.groovy
-        )
-    fi
-    log_success "Jenkins harness completed in console mode"
-fi
-
-log_step "Scenario 9: no active sessions after cleanup"
+log_step "Scenario 8: no active sessions after cleanup"
 http_json "GET" "${MANAGER_URL}/api/v1/sessions"
 assert_status "200"
 assert_json_expr 'all(session.get("status") in ("RELEASED", "EXPIRED", "FAILED") for session in payload)' "Expected only terminal session statuses"

@@ -70,18 +70,34 @@ fi
 echo ""
 echo "=== Manager ==="
 
-manager_response=$(curl -sS -w $'\n%{http_code}' "${MANAGER_URL}/health" || true)
-manager_body="${manager_response%$'\n'*}"
-manager_code="${manager_response##*$'\n'}"
+manager_live_response=$(curl -sS -w $'\n%{http_code}' "${MANAGER_URL}/live" || true)
+manager_live_body="${manager_live_response%$'\n'*}"
+manager_live_code="${manager_live_response##*$'\n'}"
 
-if [[ "$manager_code" =~ ^2 ]]; then
-    ok "Manager responded at ${MANAGER_URL}"
+if [[ "$manager_live_code" =~ ^2 ]]; then
+    ok "Manager liveness responded at ${MANAGER_URL}"
 else
-    fail "Manager health check failed at ${MANAGER_URL} (HTTP ${manager_code})"
+    fail "Manager liveness failed at ${MANAGER_URL} (HTTP ${manager_live_code})"
 fi
 
-if [[ -n "$manager_body" ]]; then
-    echo "  ${manager_body}"
+if [[ -n "$manager_live_body" ]]; then
+    echo "  ${manager_live_body}"
+fi
+
+manager_health_response=$(curl -sS -w $'\n%{http_code}' "${MANAGER_URL}/health" || true)
+manager_health_body="${manager_health_response%$'\n'*}"
+manager_health_code="${manager_health_response##*$'\n'}"
+
+if [[ "$manager_health_code" =~ ^2 ]]; then
+    ok "Manager readiness reported healthy providers"
+elif [[ "$manager_health_code" == "503" ]]; then
+    warn "Manager is alive but readiness is not satisfied yet (HTTP 503)"
+else
+    fail "Manager readiness check failed at ${MANAGER_URL} (HTTP ${manager_health_code})"
+fi
+
+if [[ -n "$manager_health_body" ]]; then
+    echo "  ${manager_health_body}"
 fi
 
 if [ ! -f "$CONFIG" ]; then

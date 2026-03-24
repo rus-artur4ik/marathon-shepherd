@@ -65,5 +65,6 @@ data class DevicePoolStatus(
 
 data class AcquireResult(
     val leaseId: String,
-    val acquiredCount: Int
+    val acquiredCount: Int,
+    val adbServers: List<AdbServer> = emptyList()
 )

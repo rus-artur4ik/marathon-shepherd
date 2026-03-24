@@ -22,8 +22,8 @@ RUN apt-get update && \
 COPY --from=builder /build/adapter/shepherd-adb/build/install/shepherd-adb /opt/shepherd-adb
 
 ENV ADAPTER_PORT=7037
-ENV ADAPTER_ADB_HOST=must-be-set
 ENV ADAPTER_ADB_PORT=5037
+ENV ADB_PROXY_PORT_RANGE=7600-7699
 
 EXPOSE 7037
 

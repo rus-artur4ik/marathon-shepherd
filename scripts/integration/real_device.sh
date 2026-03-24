@@ -16,6 +16,8 @@ REQUESTED_DEVICES="${MSH_REAL_DEVICE_REQUESTED_DEVICES:-1}"
 API_LEVEL="${MSH_REAL_DEVICE_API_LEVEL:-}"
 TTL_SECONDS="${MSH_REAL_DEVICE_TTL_SECONDS:-120}"
 DEVICE_TYPE="${MSH_REAL_DEVICE_TYPE:-physical}"
+LEASE_ADB_HOST=""
+LEASE_ADB_PORT=""
 
 TMP_ROOT=""
 STATE_DIR=""
@@ -139,13 +141,13 @@ start_self_managed_stack() {
         "providers:" \
         "  - name: \"integration-real-device-adb\"" \
         "    url: \"${ADAPTER_URL}\"" \
+        "    accessHost: \"${ADVERTISED_ADB_HOST}\"" \
         "    secret: \"${ADAPTER_SECRET}\"" \
         > "${CONFIG_FILE}"
 
     log_step "Starting shepherd-adb process on port ${adapter_port}"
     adapter_env=(
         "ADAPTER_PORT=${adapter_port}"
-        "ADAPTER_ADB_HOST=${ADVERTISED_ADB_HOST}"
         "ADAPTER_ADB_PORT=${ADVERTISED_ADB_PORT}"
         "ADAPTER_SECRET=${ADAPTER_SECRET}"
     )
@@ -243,9 +245,28 @@ assert_status "201"
 assert_json_expr 'payload.get("status") == "READY"' "Session must become READY"
 assert_json_expr 'payload.get("allocatedDevices", 0) >= 1' "Expected at least one allocated device"
 SESSION_ID="$(extract_json_value 'payload.get("id")')"
+LEASE_ADB_HOST="$(extract_json_value 'next((server.get("host", "") for server in payload.get("adbServers", []) if server.get("host")), "")')"
+LEASE_ADB_PORT="$(extract_json_value 'next((str(server.get("port")) for server in payload.get("adbServers", []) if server.get("port") is not None), "")')"
 if [[ -z "${SESSION_ID}" ]]; then
     fail "Session id is missing in create-session response"
 fi
+
+log_step "Scenario 3: lease-scoped adb endpoint exposes only allocated serial"
+if [[ -z "${LEASE_ADB_HOST}" || -z "${LEASE_ADB_PORT}" ]]; then
+    fail "Lease-scoped adb server coordinates are missing in create-session response"
+fi
+ADB_PROXY_OUTPUT="$(adb -H "${LEASE_ADB_HOST}" -P "${LEASE_ADB_PORT}" devices)"
+ALLOCATED_PROXY_SERIALS="$(printf '%s\n' "${ADB_PROXY_OUTPUT}" | awk 'NR > 1 && $2 == "device" { print $1 }')"
+if [[ -z "${ALLOCATED_PROXY_SERIALS}" ]]; then
+    echo "${ADB_PROXY_OUTPUT}"
+    fail "Lease-scoped adb endpoint did not expose any device"
+fi
+if [[ "$(printf '%s\n' "${ALLOCATED_PROXY_SERIALS}" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "${ADB_PROXY_OUTPUT}"
+    fail "Lease-scoped adb endpoint exposed more than one device"
+fi
+log_success "Lease-scoped adb endpoint exposes only the allocated device"
+
 http_json "DELETE" "${MANAGER_URL}/api/v1/sessions/${SESSION_ID}"
 assert_status "200"
 assert_json_expr 'payload.get("status") == "released"' "Session should be released"

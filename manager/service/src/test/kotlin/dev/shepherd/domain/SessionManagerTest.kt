@@ -122,6 +122,53 @@ class SessionManagerTest {
 
         assertTrue(error.message.orEmpty().contains("Unsupported deviceType 'tablet'"))
     }
+
+    @Test
+    fun `should use lease scoped adb servers returned by provider acquire`() = runTest {
+        val stateStore = StateStore(File(tempDir, "lease-scoped-adb.db").absolutePath)
+        val provider = RecordingDeviceProvider(
+            name = "rack-1",
+            adbServer = AdbServer("127.0.0.1", 5037),
+            acquiredCount = 2,
+            acquiredAdbServers = listOf(
+                AdbServer("127.0.0.1", 7601),
+                AdbServer("127.0.0.1", 7602)
+            )
+        )
+        val sessionManager = SessionManager(
+            providerCatalog = FakeProviderCatalog(active = listOf(provider)),
+            stateStore = stateStore
+        )
+
+        val session = sessionManager.createSession(requestedDevices = 2, apiLevel = "34", ttlSeconds = 60)
+
+        assertEquals(
+            listOf(AdbServer("127.0.0.1", 7601), AdbServer("127.0.0.1", 7602)),
+            session.adbServers
+        )
+    }
+
+    @Test
+    fun `should reject lease scoped provider that returns no adb servers`() = runTest {
+        val stateStore = StateStore(File(tempDir, "missing-lease-scoped-adb.db").absolutePath)
+        val provider = RecordingDeviceProvider(
+            name = "rack-1",
+            adbServer = AdbServer("127.0.0.1", 5037),
+            acquiredCount = 1,
+            acquiredAdbServers = emptyList(),
+            capabilitiesMetadata = mapOf("accessIsolation" to "lease-scoped-proxy")
+        )
+        val sessionManager = SessionManager(
+            providerCatalog = FakeProviderCatalog(active = listOf(provider)),
+            stateStore = stateStore
+        )
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            sessionManager.createSession(requestedDevices = 1, apiLevel = "34", ttlSeconds = 60)
+        }
+
+        assertTrue(error.message.orEmpty().contains("did not return lease-scoped adbServers"))
+    }
 }
 
 private class RecordingDeviceProvider(
@@ -132,7 +179,10 @@ private class RecordingDeviceProvider(
     ),
     val supportedDeviceTypes: List<String> = listOf(DEVICE_TYPE_PHYSICAL),
     private val supportsSelectiveApiAllocation: Boolean = true,
-    private val throwOnAcquire: Boolean = false
+    private val throwOnAcquire: Boolean = false,
+    private val acquiredCount: Int = 1,
+    private val acquiredAdbServers: List<AdbServer> = listOf(adbServer),
+    private val capabilitiesMetadata: Map<String, String> = emptyMap()
 ) : DeviceProvider {
     val releasedLeaseIds: MutableList<String> = mutableListOf()
     var acquireCalls: Int = 0
@@ -155,7 +205,8 @@ private class RecordingDeviceProvider(
     override val capabilities: AdapterCapabilities = AdapterCapabilities(
         supportedDeviceTypes = supportedDeviceTypes,
         supportedApiLevels = inventory.mapNotNull { it.apiLevel }.distinct(),
-        supportsSelectiveApiAllocation = supportsSelectiveApiAllocation
+        supportsSelectiveApiAllocation = supportsSelectiveApiAllocation,
+        metadata = capabilitiesMetadata
     )
 
     override suspend fun queryDevices(): DevicePoolStatus {
@@ -166,7 +217,11 @@ private class RecordingDeviceProvider(
     override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult {
         acquireCalls += 1
         if (throwOnAcquire) throw RuntimeException("Simulated acquire failure on $name")
-        return AcquireResult(leaseId = "lease_1", acquiredCount = 1)
+        return AcquireResult(
+            leaseId = "lease_1",
+            acquiredCount = acquiredCount,
+            adbServers = acquiredAdbServers
+        )
     }
 
     override fun supportsDeviceType(deviceType: String): Boolean {

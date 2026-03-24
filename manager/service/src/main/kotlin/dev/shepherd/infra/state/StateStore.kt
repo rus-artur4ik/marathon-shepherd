@@ -5,21 +5,11 @@ import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import org.jetbrains.exposed.sql.Database
-import org.jetbrains.exposed.sql.SchemaUtils
+import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.javatime.timestamp
-import org.jetbrains.exposed.sql.or
-import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -125,7 +115,8 @@ class StateStore(dbPath: String) {
             } else {
                 Sessions.selectAll().where {
                     (Sessions.status eq SessionStatus.READY.name) or
-                        (Sessions.status eq SessionStatus.PENDING.name)
+                        (Sessions.status eq SessionStatus.PENDING.name) or
+                        (Sessions.status eq SessionStatus.FAILED.name)
                 }.map { row -> rowToSession(row) }
             }
         }

@@ -1,11 +1,10 @@
 package dev.shepherd.api
 
 import dev.shepherd.domain.DeviceAllocator
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
-import io.ktor.server.response.respond
-import io.ktor.server.routing.Route
-import io.ktor.server.routing.get
+import io.ktor.http.*
+import io.ktor.server.application.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -20,7 +19,20 @@ data class ShepherdHealthResponse(
     val providers: List<ProviderHealthSummary>
 )
 
+@Serializable
+data class ShepherdLivenessResponse(val status: String, val version: String)
+
 fun Route.healthRoutes(deviceAllocator: DeviceAllocator, version: String) {
+    get("/live") {
+        call.respond(
+            HttpStatusCode.OK,
+            ShepherdLivenessResponse(
+                status = "alive",
+                version = version
+            )
+        )
+    }
+
     get("/health") {
         val statuses = try {
             deviceAllocator.getProviderStatuses()

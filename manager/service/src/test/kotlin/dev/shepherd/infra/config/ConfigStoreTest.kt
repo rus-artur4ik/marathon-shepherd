@@ -1,7 +1,7 @@
 package dev.shepherd.infra.config
 
-import dev.shepherd.domain.model.ShepherdConfig
 import dev.shepherd.domain.model.ProviderConfig
+import dev.shepherd.domain.model.ShepherdConfig
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -34,6 +34,25 @@ class ConfigStoreTest {
         assertEquals("http://192.168.1.10:8091", config.providers[0].url)
         assertEquals("emu-farm-1", config.providers[1].name)
         assertEquals("http://192.168.1.20:8092", config.providers[1].url)
+    }
+
+    @Test
+    fun `should load optional access host override from yaml`() {
+        val configFile = File(tempDir, "config-access-host.yaml")
+        configFile.writeText(
+            """
+            providers:
+              - name: "farm-1"
+                url: "http://192.168.1.20:7037"
+                accessHost: "farm.internal"
+            """.trimIndent()
+        )
+
+        val store = ConfigStore(configFile.absolutePath)
+        val config = store.loadConfig()
+
+        assertEquals(1, config.providers.size)
+        assertEquals("farm.internal", config.providers.single().accessHost)
     }
 
     @Test

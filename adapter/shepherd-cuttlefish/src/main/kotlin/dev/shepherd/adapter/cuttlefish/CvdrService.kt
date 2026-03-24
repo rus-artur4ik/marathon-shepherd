@@ -44,13 +44,13 @@ class CvdrService(
 
         if (!result.isSuccess) {
             logger.error("cvdr create failed (exit ${result.exitCode}): ${result.output}")
-            return@withContext CvdrAcquireResult(leaseId = "", acquiredCount = 0, group = "")
+            return@withContext CvdrAcquireResult(leaseId = null, acquiredCount = 0, group = "")
         }
 
         val group = parseGroupFromCreateOutput(result.output)
         if (group.isNullOrBlank()) {
             logger.error("Failed to parse CVDR group from output: ${result.output}")
-            return@withContext CvdrAcquireResult(leaseId = "", acquiredCount = 0, group = "")
+            return@withContext CvdrAcquireResult(leaseId = null, acquiredCount = 0, group = "")
         }
 
         activeLeases[leaseId] = CvdrLease(group = group, count = count)
@@ -112,8 +112,9 @@ class CvdrService(
     }
 
     private fun parseGroupFromCreateOutput(output: String): String? {
-        val groupLine = output.lines().firstOrNull { it.contains("group") }
-        return groupLine?.substringAfter(":")?.trim()
+        val groupLine = output.lines().firstOrNull { it.contains("group", ignoreCase = true) && it.contains(":") }
+        val group = groupLine?.substringAfter(":")?.trim()
+        return group?.takeIf { it.isNotBlank() && ' ' !in it }
     }
 
     private fun parseInstanceCount(jsonOutput: String): Int {
@@ -128,7 +129,7 @@ class CvdrService(
 
 data class CvdrLease(val group: String, val count: Int)
 
-data class CvdrAcquireResult(val leaseId: String, val acquiredCount: Int, val group: String)
+data class CvdrAcquireResult(val leaseId: String?, val acquiredCount: Int, val group: String)
 
 @Serializable
 private data class CvdrInstance(val name: String = "", val status: String = "")

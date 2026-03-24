@@ -23,7 +23,6 @@ COPY --from=builder /build/adapter/shepherd-farm/build/install/shepherd-farm /op
 
 ENV ADAPTER_PORT=7037
 ENV FARM_SERVER_PORT=8080
-ENV ADAPTER_ADB_HOST=must-be-set
 ENV ADAPTER_ADB_PORT=5037
 
 EXPOSE 7037

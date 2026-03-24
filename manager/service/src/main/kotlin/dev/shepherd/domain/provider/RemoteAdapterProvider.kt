@@ -1,29 +1,11 @@
 package dev.shepherd.domain.provider
 
-import dev.shepherd.adapter.api.AcquireRequest
-import dev.shepherd.adapter.api.AcquireResponse
-import dev.shepherd.adapter.api.AdapterAccess
-import dev.shepherd.adapter.api.AdapterCapabilities
-import dev.shepherd.adapter.api.AdapterConnection
-import dev.shepherd.adapter.api.AdapterConnectionAuth
-import dev.shepherd.adapter.api.AdapterDeviceProfile
-import dev.shepherd.adapter.api.ACCESS_AUTH_NETWORK
-import dev.shepherd.adapter.api.ACCESS_EXPOSURE_DIRECT_TCP
-import dev.shepherd.adapter.api.ACCESS_PROTOCOL_ADB
-import dev.shepherd.adapter.api.ACCESS_TRANSPORT_TCP
-import dev.shepherd.adapter.api.PoolStatusResponse
-import dev.shepherd.adapter.api.preferredAdbTcpConnection
+import dev.shepherd.adapter.api.*
 import dev.shepherd.domain.model.AdbServer
-import io.ktor.client.HttpClient
-import io.ktor.client.request.bearerAuth
-import io.ktor.client.request.delete
-import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
@@ -38,6 +20,7 @@ import org.slf4j.LoggerFactory
 class RemoteAdapterProvider(
     override val name: String,
     private val adapterUrl: String,
+    private val accessHost: String,
     private val secret: String,
     private val httpClient: HttpClient
 ) : DeviceProvider {
@@ -58,7 +41,7 @@ class RemoteAdapterProvider(
 
     @Volatile
     private var cache: AdapterCache = AdapterCache(
-        access = buildUnknownAccess(name),
+        access = buildUnknownAccess(name, accessHost),
         capabilities = AdapterCapabilities(),
         inventory = emptyList()
     )
@@ -77,7 +60,7 @@ class RemoteAdapterProvider(
             }
             if (response.status.isSuccess()) {
                 val body: PoolStatusResponse = json.decodeFromString(response.bodyAsText())
-                cache = AdapterCache(body.access, body.capabilities, body.inventory)
+                cache = AdapterCache(normalizeAccessHost(body.access, accessHost), body.capabilities, body.inventory)
                 DevicePoolStatus(
                     available = body.pool.available,
                     busy = body.pool.busy,
@@ -104,13 +87,25 @@ class RemoteAdapterProvider(
 
             if (response.status.isSuccess()) {
                 val body: AcquireResponse = json.decodeFromString(response.bodyAsText())
-                cache = AdapterCache(body.access, body.capabilities, body.inventory)
-                val preferredConnection: AdapterConnection? = body.access.preferredAdbTcpConnection()
+                val normalizedAccess: AdapterAccess = normalizeAccessHost(body.access, accessHost)
+                cache = AdapterCache(normalizedAccess, body.capabilities, body.inventory)
+                val adbServers: List<AdbServer> = normalizedAccess.connections
+                    .filter { connection ->
+                        connection.protocol == ACCESS_PROTOCOL_ADB &&
+                            connection.transport == ACCESS_TRANSPORT_TCP
+                    }
+                    .map { connection -> connection.toAdbServer() }
+                val preferredConnection: AdapterConnection? = normalizedAccess.preferredAdbTcpConnection()
                 logger.info(
                     "Adapter '$name': acquired ${body.acquiredCount}, " +
-                        "preferredAccess=${preferredConnection?.host}:${preferredConnection?.port}"
+                        "preferredAccess=${preferredConnection?.host}:${preferredConnection?.port}, " +
+                        "adbServers=${adbServers.joinToString { server -> "${server.host}:${server.port}" }}"
                 )
-                AcquireResult(leaseId = body.leaseId, acquiredCount = body.acquiredCount)
+                AcquireResult(
+                    leaseId = body.leaseId,
+                    acquiredCount = body.acquiredCount,
+                    adbServers = adbServers
+                )
             } else {
                 logger.error("Adapter '$name' acquire failed: ${response.status}")
                 AcquireResult(leaseId = "", acquiredCount = 0)
@@ -167,7 +162,7 @@ class RemoteAdapterProvider(
 
     private fun AdapterConnection.toAdbServer(): AdbServer = AdbServer(host = host, port = port)
 
-    private fun buildUnknownAccess(providerName: String): AdapterAccess {
+    private fun buildUnknownAccess(providerName: String, resolvedAccessHost: String): AdapterAccess {
         return AdapterAccess(
             preferredConnectionId = "$providerName-unknown",
             connections = listOf(
@@ -175,13 +170,32 @@ class RemoteAdapterProvider(
                     id = "$providerName-unknown",
                     protocol = ACCESS_PROTOCOL_ADB,
                     transport = ACCESS_TRANSPORT_TCP,
-                    host = "unknown",
+                    host = resolvedAccessHost,
                     port = 5037,
                     exposure = ACCESS_EXPOSURE_DIRECT_TCP,
                     auth = AdapterConnectionAuth(type = ACCESS_AUTH_NETWORK),
-                    metadata = mapOf("scope" to "unknown")
+                    metadata = mapOf("scope" to "unknown", "resolvedBy" to "manager")
                 )
             )
         )
     }
+}
+
+internal fun normalizeAccessHost(access: AdapterAccess, resolvedAccessHost: String): AdapterAccess {
+    if (resolvedAccessHost.isBlank()) {
+        return access
+    }
+    return access.copy(
+        connections = access.connections.map { connection ->
+            if (connection.protocol == ACCESS_PROTOCOL_ADB &&
+                connection.transport == ACCESS_TRANSPORT_TCP &&
+                connection.exposure == ACCESS_EXPOSURE_DIRECT_TCP
+            ) {
+                connection.copy(host = resolvedAccessHost)
+            } else {
+                connection
+            }
+        },
+        metadata = access.metadata + mapOf("resolvedAccessHost" to resolvedAccessHost)
+    )
 }

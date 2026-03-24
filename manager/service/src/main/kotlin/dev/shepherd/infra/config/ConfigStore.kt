@@ -50,7 +50,7 @@ class ConfigStore(private val configPath: String) {
         synchronized(lock) {
             cachedConfig = null
             lastModified = 0
+            return loadConfig()
         }
-        return loadConfig()
     }
 }

@@ -1,17 +1,8 @@
 package dev.shepherd.domain.provider
 
-import dev.shepherd.adapter.api.AdapterAccess
-import dev.shepherd.adapter.api.AdapterCapabilities
-import dev.shepherd.adapter.api.AdapterConnection
-import dev.shepherd.adapter.api.AdapterConnectionAuth
-import dev.shepherd.adapter.api.AdapterDeviceProfile
-import dev.shepherd.adapter.api.ACCESS_AUTH_NETWORK
-import dev.shepherd.adapter.api.ACCESS_EXPOSURE_DIRECT_TCP
-import dev.shepherd.adapter.api.ACCESS_PROTOCOL_ADB
-import dev.shepherd.adapter.api.ACCESS_TRANSPORT_TCP
-import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
+import dev.shepherd.adapter.api.*
 import dev.shepherd.domain.model.AdbServer
-import java.util.UUID
+import java.util.*
 
 /**
  * Controllable fake for unit tests. Always healthy, always returns configured pool size.
@@ -55,7 +46,11 @@ class FakeDeviceProvider(
     override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult {
         if (shouldFail) return AcquireResult(leaseId = "", acquiredCount = 0)
         val acquired = minOf(count, totalDevices)
-        return AcquireResult(leaseId = "fake_${UUID.randomUUID().toString().take(8)}", acquiredCount = acquired)
+        return AcquireResult(
+            leaseId = "fake_${UUID.randomUUID().toString().take(8)}",
+            acquiredCount = acquired,
+            adbServers = listOf(adbServer)
+        )
     }
 
     override fun supportsDeviceType(deviceType: String): Boolean {

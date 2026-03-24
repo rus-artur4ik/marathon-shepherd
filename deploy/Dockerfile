@@ -31,6 +31,6 @@ ENV MSH_DATA_DIR=/var/lib/msh
 EXPOSE 6037
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl -sf http://localhost:6037/health || exit 1
+    CMD curl -sf http://localhost:6037/live || exit 1
 
 ENTRYPOINT ["/opt/shepherd/bin/manager"]

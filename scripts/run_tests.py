@@ -26,10 +26,12 @@ SPINNER_FRAMES: tuple[str, ...] = ("|", "/", "-", "\\")
 
 @dataclass
 class RunnerOptions:
+    run_component_tests: bool = False
     run_docker_integration: bool = True
+    run_e2e_jenkins: bool = True
     run_real_device_integration: bool = True
+    run_e2e_marathon: bool = False
     run_public_ui_integration: bool = True
-    skip_jenkins_harness: bool = False
     gradle_continue_enabled: bool = True
     gradle_test_args: list[str] = field(default_factory=list)
 
@@ -44,28 +46,43 @@ class StatusEntry:
 def usage() -> str:
     return """Usage: scripts/run_tests.sh [options] [-- <gradle test args>]
 
-Options:
-  --skip-docker-integration       Skip scripts/integration/docker_compose.sh
-  --run-real-device-integration   Explicitly enable scripts/integration/real_device.sh
-  --skip-real-device-integration  Skip scripts/integration/real_device.sh
-  --skip-public-ui-integration    Skip scripts/public_ui/run_tests.sh
-  --skip-environment-integration  Skip all environment-dependent integration tests (docker + real-device + public-ui)
-  --skip-jenkins-harness          Skip Groovy Jenkins harness scenarios in integration scripts
-  --fail-fast, --no-continue      Disable default Gradle --continue behavior
-  -h, --help                      Show this help
+Test groups and subjects:
+  [unit]        Isolated JVM tests, one stage per service
+  [build]       installDist per service (required by integration/e2e)
+  [component]   Each service built locally and tested alone via HTTP (opt-in)
+  [integration] All services together, synthetic devices
+  [e2e]         Full user-facing flow (real device or CI tool harness)
 
 Default stages:
-  1) ./gradlew test
-  2) ./gradlew :manager:service:installDist :adapter:shepherd-*:installDist
-  3) scripts/integration/console.sh
-  4) scripts/integration/real_device.sh
-  5) scripts/public_ui/run_tests.sh
-  6) scripts/integration/docker_compose.sh
+  [unit]        manager, shepherd-adb, shepherd-cuttlefish
+  [build]       manager, shepherd-adb, shepherd-farm, shepherd-cuttlefish
+  [integration] scripts/integration/console.sh
+  [integration] scripts/integration/docker_compose.sh     (--skip-docker-integration to disable)
+  [e2e]         scripts/integration/e2e_jenkins.sh        (--skip-e2e-jenkins to disable)
+  [e2e]         scripts/integration/real_device.sh        (--skip-real-device-integration to disable)
+  [e2e]         scripts/public_ui/run_tests.sh            (--skip-public-ui-integration to disable)
+
+Opt-in stages:
+  [component]   smoke_docker.sh per service                (--run-component-tests to enable)
+  [e2e]         scripts/integration/e2e_marathon.sh        (--run-e2e-marathon to enable)
+
+Options:
+  --run-component-tests           Enable [component] per service (builds local Docker images, requires Docker)
+  --run-e2e-marathon              Enable [e2e] marathon APK flow (requires device + APKs + ./gradlew installDist)
+  --skip-docker-integration       Skip [integration] docker_compose.sh
+  --run-real-device-integration   Explicitly enable [e2e] real_device.sh
+  --skip-real-device-integration  Skip [e2e] real_device.sh
+  --skip-e2e-jenkins              Skip [e2e] e2e_jenkins.sh
+  --skip-jenkins-harness          Alias for --skip-e2e-jenkins
+  --skip-public-ui-integration    Skip [e2e] public_ui/run_tests.sh
+  --skip-environment-integration  Skip all environment-dependent stages (docker + real-device + public-ui)
+  --fail-fast, --no-continue      Stop on first failed stage (default: continue)
+  -h, --help                      Show this help
 
 Examples:
   scripts/run_tests.sh
+  scripts/run_tests.sh --run-component-tests --run-e2e-marathon
   scripts/run_tests.sh --skip-real-device-integration
-  scripts/run_tests.sh --skip-docker-integration
   scripts/run_tests.sh --skip-environment-integration -- --console=plain
   scripts/run_tests.sh --fail-fast
 """
@@ -83,6 +100,24 @@ def parse_args(argv: Sequence[str]) -> RunnerOptions:
         if arg == "--":
             pass_through = True
             continue
+        if arg in ("--run-component-tests", "--run-smoke-docker"):
+            options.run_component_tests = True
+            continue
+        if arg in ("--skip-component-tests", "--skip-smoke-docker"):
+            options.run_component_tests = False
+            continue
+        if arg in ("--run-e2e-marathon", "--run-e2e-apk"):
+            options.run_e2e_marathon = True
+            continue
+        if arg in ("--skip-e2e-marathon", "--skip-e2e-apk"):
+            options.run_e2e_marathon = False
+            continue
+        if arg in ("--skip-e2e-jenkins", "--skip-jenkins-harness"):
+            options.run_e2e_jenkins = False
+            continue
+        if arg in ("--run-e2e-jenkins",):
+            options.run_e2e_jenkins = True
+            continue
         if arg in ("--skip-docker-integration", "--skip-docker"):
             options.run_docker_integration = False
             continue
@@ -99,9 +134,6 @@ def parse_args(argv: Sequence[str]) -> RunnerOptions:
             options.run_docker_integration = False
             options.run_real_device_integration = False
             options.run_public_ui_integration = False
-            continue
-        if arg == "--skip-jenkins-harness":
-            options.skip_jenkins_harness = True
             continue
         if arg in ("--fail-fast", "--no-continue"):
             options.gradle_continue_enabled = False
@@ -508,6 +540,7 @@ class TestRunner:
         self.plain = PlainPrinter()
         self.rich = None if self.use_plain_logs else RichPrinter()
         self.failed = False
+        self.failed_stage_logs: list[tuple[str, Path]] = []
         self.report_printed = False
         self._install_signal_handlers()
 
@@ -573,23 +606,30 @@ class TestRunner:
     def seed_prerequisites(self) -> None:
         for label in ("java", "curl", "python3", "adb"):
             self.seed_prerequisite(label)
-        if not self.options.skip_jenkins_harness:
+        if self.options.run_e2e_jenkins:
             self.seed_prerequisite("groovy")
-        if self.options.run_docker_integration:
+        if self.options.run_docker_integration or self.options.run_component_tests:
             self.seed_prerequisite("docker")
             self.seed_prerequisite("docker engine")
         self.seed_prerequisite("entrypoint :: ./gradlew")
-        self.seed_prerequisite("entrypoint :: console integration")
-        if self.options.run_real_device_integration:
-            self.seed_prerequisite("entrypoint :: real-device integration")
+        self.seed_prerequisite("entrypoint :: integration (local)")
+        if self.options.run_component_tests:
+            self.seed_prerequisite("entrypoint :: component tests")
+        if self.options.run_e2e_jenkins:
+            self.seed_prerequisite("entrypoint :: e2e (jenkins)")
+        if self.options.run_real_device_integration or self.options.run_e2e_marathon:
             self.seed_prerequisite("real-device readiness")
+        if self.options.run_real_device_integration:
+            self.seed_prerequisite("entrypoint :: e2e (real device)")
+        if self.options.run_e2e_marathon:
+            self.seed_prerequisite("entrypoint :: e2e (marathon)")
         if self.options.run_public_ui_integration:
-            self.seed_prerequisite("entrypoint :: public-ui integration")
-            self.seed_prerequisite("entrypoint :: public-ui prepare")
+            self.seed_prerequisite("entrypoint :: e2e (public UI)")
+            self.seed_prerequisite("entrypoint :: e2e (public UI prepare)")
             self.seed_prerequisite("public-ui target")
             self.seed_prerequisite("public-ui APKs")
         if self.options.run_docker_integration:
-            self.seed_prerequisite("entrypoint :: docker-compose integration")
+            self.seed_prerequisite("entrypoint :: integration (docker-compose)")
 
     def seed_stages(self, selected_stage_labels: Sequence[str]) -> None:
         self.seed_stage("Runner configuration")
@@ -620,20 +660,38 @@ class TestRunner:
 
     def prepare_configuration(self) -> None:
         all_stage_labels = [
-            "Unit tests (Gradle)",
-            "Preparing manager + adapter distributions",
-            "Integration tests (console)",
-            "Integration tests (real device)",
-            "Integration tests (public UI sample)",
-            "Integration tests (docker-compose)",
+            "[unit] manager",
+            "[unit] shepherd-adb",
+            "[unit] shepherd-cuttlefish",
+            "[build] manager",
+            "[build] shepherd-adb",
+            "[build] shepherd-farm",
+            "[build] shepherd-cuttlefish",
+            "[component] shepherd-adb",
+            "[component] shepherd-farm",
+            "[component] shepherd-cuttlefish",
+            "[component] manager",
+            "[integration] local services",
+            "[integration] docker compose",
+            "[e2e] jenkins",
+            "[e2e] marathon",
+            "[e2e] real device",
+            "[e2e] public UI",
         ]
-        selected_stages = ["unit-tests", "distribution-build", "console-integration"]
-        if self.options.run_real_device_integration:
-            selected_stages.append("real-device-integration")
-        if self.options.run_public_ui_integration:
-            selected_stages.append("public-ui-integration")
+        selected_stages: list[str] = ["unit", "build"]
+        if self.options.run_component_tests:
+            selected_stages.append("component")
+        selected_stages.append("integration-local")
         if self.options.run_docker_integration:
-            selected_stages.append("docker-compose-integration")
+            selected_stages.append("integration-docker")
+        if self.options.run_e2e_jenkins:
+            selected_stages.append("e2e-jenkins")
+        if self.options.run_real_device_integration:
+            selected_stages.append("e2e-real-device")
+        if self.options.run_e2e_marathon:
+            selected_stages.append("e2e-marathon")
+        if self.options.run_public_ui_integration:
+            selected_stages.append("e2e-public-ui")
         self.config_lines.append(f"Output mode: {'plain' if self.use_plain_logs else 'dynamic (rich)'}")
         self.config_lines.append(
             f"Fail strategy: {'continue' if self.options.gradle_continue_enabled else 'fail-fast'}"
@@ -643,10 +701,7 @@ class TestRunner:
         self.config_lines.append("Selected stages:")
         for stage_name in selected_stages:
             self.config_lines.append(f"  - {stage_name}")
-        self.config_lines.append(
-            f"Jenkins harness scenarios: {'skipped' if self.options.skip_jenkins_harness else 'included'}"
-        )
-        if self.options.run_real_device_integration:
+        if self.options.run_real_device_integration or self.options.run_e2e_marathon:
             if self.real_device_manager_url_override:
                 self.config_lines.append(f"Real-device manager: {self.real_device_manager_url_override}")
             else:
@@ -675,11 +730,11 @@ class TestRunner:
             available, detail = check_command_available(command_name)
             self.set_prerequisite(label, "ok" if available else "missing", detail)
             ok = ok and available
-        if not self.options.skip_jenkins_harness:
+        if self.options.run_e2e_jenkins:
             available, detail = check_command_available("groovy")
             self.set_prerequisite("groovy", "ok" if available else "missing", detail)
             ok = ok and available
-        if self.options.run_docker_integration:
+        if self.options.run_docker_integration or self.options.run_component_tests:
             available, detail = check_command_available("docker")
             self.set_prerequisite("docker", "ok" if available else "missing", detail)
             ok = ok and available
@@ -691,27 +746,29 @@ class TestRunner:
                 self.set_prerequisite("docker engine", "missing", "docker is not installed")
         entrypoints = [
             ("entrypoint :: ./gradlew", REPO_ROOT / "gradlew"),
-            ("entrypoint :: console integration", REPO_ROOT / "scripts/integration/console.sh"),
+            ("entrypoint :: integration (local)", REPO_ROOT / "scripts/integration/console.sh"),
         ]
+        if self.options.run_component_tests:
+            entrypoints.append(("entrypoint :: component tests", REPO_ROOT / "scripts/integration/smoke_docker.sh"))
+        if self.options.run_e2e_jenkins:
+            entrypoints.append(("entrypoint :: e2e (jenkins)", REPO_ROOT / "scripts/integration/e2e_jenkins.sh"))
         if self.options.run_real_device_integration:
-            entrypoints.append(("entrypoint :: real-device integration", REPO_ROOT / "scripts/integration/real_device.sh"))
+            entrypoints.append(("entrypoint :: e2e (real device)", REPO_ROOT / "scripts/integration/real_device.sh"))
+        if self.options.run_e2e_marathon:
+            entrypoints.append(("entrypoint :: e2e (marathon)", REPO_ROOT / "scripts/integration/e2e_apk.sh"))
         if self.options.run_public_ui_integration:
-            entrypoints.append(("entrypoint :: public-ui integration", REPO_ROOT / "scripts/public_ui/run_tests.sh"))
-            entrypoints.append(("entrypoint :: public-ui prepare", REPO_ROOT / "scripts/public_ui/build_test_apk.sh"))
+            entrypoints.append(("entrypoint :: e2e (public UI)", REPO_ROOT / "scripts/public_ui/run_tests.sh"))
+            entrypoints.append(("entrypoint :: e2e (public UI prepare)", REPO_ROOT / "scripts/public_ui/build_test_apk.sh"))
         if self.options.run_docker_integration:
-            entrypoints.append(("entrypoint :: docker-compose integration", REPO_ROOT / "scripts/integration/docker_compose.sh"))
+            entrypoints.append(("entrypoint :: integration (docker-compose)", REPO_ROOT / "scripts/integration/docker_compose.sh"))
         for label, path in entrypoints:
             available, detail = check_executable(path)
             self.set_prerequisite(label, "ok" if available else "missing", detail)
             ok = ok and available
-        if self.options.run_real_device_integration:
+        if self.options.run_real_device_integration or self.options.run_e2e_marathon:
             ok = self._record_real_device_prerequisite() and ok
         if self.options.run_public_ui_integration:
             ok = self._record_public_ui_prerequisite() and ok
-        if self.options.skip_jenkins_harness:
-            os.environ["MSH_SKIP_JENKINS_HARNESS"] = "true"
-        else:
-            os.environ.pop("MSH_SKIP_JENKINS_HARNESS", None)
         self.update_stage("ok" if ok else "failed", "all selected prerequisites are available" if ok else "missing prerequisites")
         if self.use_plain_logs:
             self.print_plain_prerequisites()
@@ -814,75 +871,139 @@ class TestRunner:
         repo_env = os.environ.copy()
         if self.use_plain_logs:
             repo_env["NO_COLOR"] = "1"
-        self._run_stage_command(
-            "Unit tests (Gradle)",
-            "Gradle unit tests passed",
-            [str(REPO_ROOT / "gradlew"), *self.gradle_stage_args, "test"],
-            env=repo_env,
-        )
-        self._run_stage_command(
-            "Preparing manager + adapter distributions",
-            "Manager and adapter distributions are ready",
-            [
-                str(REPO_ROOT / "gradlew"),
-                *self.gradle_stage_args,
-                ":manager:service:installDist",
-                ":adapter:shepherd-adb:installDist",
-                ":adapter:shepherd-farm:installDist",
-                ":adapter:shepherd-cuttlefish:installDist",
-            ],
-            env=repo_env,
-        )
+        # ── [unit] per service ────────────────────────────────────────────────
+        for service, task in (
+            ("manager", ":manager:service:test"),
+            ("shepherd-adb", ":adapter:shepherd-adb:test"),
+            ("shepherd-cuttlefish", ":adapter:shepherd-cuttlefish:test"),
+        ):
+            self._run_stage_command(
+                f"[unit] {service}",
+                f"{service} unit tests passed",
+                [str(REPO_ROOT / "gradlew"), *self.gradle_stage_args, task],
+                env=repo_env,
+            )
+        # ── [build] installDist per service ───────────────────────────────────
+        for service, task in (
+            ("manager", ":manager:service:installDist"),
+            ("shepherd-adb", ":adapter:shepherd-adb:installDist"),
+            ("shepherd-farm", ":adapter:shepherd-farm:installDist"),
+            ("shepherd-cuttlefish", ":adapter:shepherd-cuttlefish:installDist"),
+        ):
+            self._run_stage_command(
+                f"[build] {service}",
+                f"{service} distribution ready",
+                [str(REPO_ROOT / "gradlew"), *self.gradle_stage_args, task],
+                env=repo_env,
+            )
+        # ── [component] per service (opt-in) ──────────────────────────────────
         integration_env = os.environ.copy()
         integration_env["NO_COLOR"] = "1"
         integration_env["MSH_LOG_MODE"] = "plain"
+        for service in ("shepherd-adb", "shepherd-farm", "shepherd-cuttlefish", "manager"):
+            if self.options.run_component_tests:
+                svc_env = {**integration_env, "MSH_COMPONENT_SERVICE": service}
+                self._run_stage_command(
+                    f"[component] {service}",
+                    f"{service} component tests passed",
+                    [str(REPO_ROOT / "scripts/integration/smoke_docker.sh")],
+                    env=svc_env,
+                )
+            else:
+                self._skip_stage(
+                    f"[component] {service}",
+                    "Enable with --run-component-tests (requires Docker)",
+                )
+        # ── [integration] ─────────────────────────────────────────────────────
         self._run_stage_command(
-            "Integration tests (console)",
-            "Console integration scenarios passed",
+            "[integration] local services",
+            "Local service integration scenarios passed",
             [str(REPO_ROOT / "scripts/integration/console.sh")],
             env=integration_env,
         )
+        if self.options.run_docker_integration:
+            self._run_stage_command(
+                "[integration] docker compose",
+                "Docker Compose integration scenarios passed",
+                [str(REPO_ROOT / "scripts/integration/docker_compose.sh")],
+                env=integration_env,
+            )
+        else:
+            self._skip_stage(
+                "[integration] docker compose",
+                "Skipped via --skip-docker-integration or --skip-environment-integration",
+            )
+        # ── [e2e] ─────────────────────────────────────────────────────────────
+        if self.options.run_e2e_jenkins:
+            self._run_stage_command(
+                "[e2e] jenkins",
+                "Jenkins shared-library flow verified",
+                [str(REPO_ROOT / "scripts/integration/e2e_jenkins.sh")],
+                env=integration_env,
+            )
+        else:
+            self._skip_stage(
+                "[e2e] jenkins",
+                "Skipped via --skip-e2e-jenkins",
+            )
+        if self.options.run_e2e_marathon:
+            self._run_stage_command(
+                "[e2e] marathon",
+                "Full Shepherd flow verified: allocation → proxy → instrumentation → cleanup",
+                [str(REPO_ROOT / "scripts/integration/e2e_apk.sh")],
+                env=integration_env,
+            )
+        else:
+            self._skip_stage(
+                "[e2e] marathon",
+                "Enable with --run-e2e-marathon (requires connected device + ./gradlew installDist + APKs)",
+            )
         if self.options.run_real_device_integration:
             self._run_stage_command(
-                "Integration tests (real device)",
+                "[e2e] real device",
                 "Real-device integration scenarios passed",
                 [str(REPO_ROOT / "scripts/integration/real_device.sh")],
                 env=integration_env,
             )
         else:
             self._skip_stage(
-                "Integration tests (real device)",
+                "[e2e] real device",
                 "Skipped via --skip-real-device-integration or --skip-environment-integration",
             )
         if self.options.run_public_ui_integration:
             self._run_stage_command(
-                "Integration tests (public UI sample)",
+                "[e2e] public UI",
                 "Public UI architecture-samples scenario passed",
                 [str(REPO_ROOT / "scripts/public_ui/run_tests.sh"), "--plain"],
                 env=integration_env,
             )
         else:
             self._skip_stage(
-                "Integration tests (public UI sample)",
+                "[e2e] public UI",
                 "Skipped via --skip-public-ui-integration or --skip-environment-integration",
             )
-        if self.options.run_docker_integration:
-            self._run_stage_command(
-                "Integration tests (docker-compose)",
-                "Docker-compose integration scenarios passed",
-                [str(REPO_ROOT / "scripts/integration/docker_compose.sh")],
-                env=integration_env,
-            )
+        if self.failed:
+            count = len(self.failed_stage_logs)
+            failed_names = ", ".join(label for label, _ in self.failed_stage_logs)
+            summary_msg = f"{count} stage(s) failed: {failed_names}"
+            self.start_stage("Final summary", "collecting final result")
+            self.update_stage("failed", summary_msg)
+            if not self.use_plain_logs and self.rich is not None and not self.report_printed:
+                self.refresh()
+                self.rich.stop()
+                self.report_printed = True
+            if self.use_plain_logs:
+                self.plain.print_step("Final summary")
+                self.plain.print_info(summary_msg)
+            for failed_label, log_file in self.failed_stage_logs:
+                self.print_failure_excerpt(failed_label, log_file)
+            raise RuntimeError(summary_msg)
         else:
-            self._skip_stage(
-                "Integration tests (docker-compose)",
-                "Skipped via --skip-docker-integration or --skip-environment-integration",
-            )
-        self.start_stage("Final summary", "collecting final result")
-        self.update_stage("ok", "All selected test stages passed")
-        if self.use_plain_logs:
-            self.plain.print_step("Final summary")
-            self.plain.print_info("All selected test stages passed")
+            self.start_stage("Final summary", "collecting final result")
+            self.update_stage("ok", "All selected test stages passed")
+            if self.use_plain_logs:
+                self.plain.print_step("Final summary")
+                self.plain.print_info("All selected test stages passed")
 
     def _skip_stage(self, label: str, reason: str) -> None:
         self.current_log_file = None
@@ -910,8 +1031,11 @@ class TestRunner:
             if exit_code != 0:
                 self.update_stage("failed", f"see {log_file}")
                 self.failed = True
+                self.failed_stage_logs.append((label, log_file))
                 self.print_failure_excerpt(label, log_file)
-                raise RuntimeError(f"{label} failed")
+                if not self.options.gradle_continue_enabled:
+                    raise RuntimeError(f"{label} failed")
+                return
             self.update_stage("ok", success_message)
             self.plain.print_info(success_message)
             return
@@ -919,12 +1043,15 @@ class TestRunner:
         if exit_code != 0:
             self.update_stage("failed", f"see {log_file}")
             self.failed = True
-            if self.rich is not None and not self.report_printed:
-                self.refresh()
-                self.rich.stop()
-                self.report_printed = True
-            self.print_failure_excerpt(label, log_file)
-            raise RuntimeError(f"{label} failed")
+            self.failed_stage_logs.append((label, log_file))
+            if not self.options.gradle_continue_enabled:
+                if self.rich is not None and not self.report_printed:
+                    self.refresh()
+                    self.rich.stop()
+                    self.report_printed = True
+                self.print_failure_excerpt(label, log_file)
+                raise RuntimeError(f"{label} failed")
+            return
         self.update_stage("ok", success_message)
 
     def _run_plain_command(

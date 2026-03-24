@@ -1,14 +1,11 @@
 package dev.shepherd.adapter.api
 
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
-import io.ktor.server.auth.authenticate
-import io.ktor.server.request.receive
-import io.ktor.server.response.respond
-import io.ktor.server.routing.Route
-import io.ktor.server.routing.delete
-import io.ktor.server.routing.get
-import io.ktor.server.routing.post
+import io.ktor.http.*
+import io.ktor.server.application.*
+import io.ktor.server.auth.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 
 data class AdapterStatus(
     val pool: AdapterPool,
@@ -57,7 +54,8 @@ abstract class AdapterHandler(val adapterType: String, val version: String = "0.
         )
     }
 
-    open fun defaultAccess(env: AdapterEnv): AdapterAccess = env.buildDefaultAccess(adapterType)
+    open fun defaultAccess(env: AdapterEnv, requestHost: String): AdapterAccess =
+        env.buildDefaultAccess(adapterType, requestHost)
 }
 
 /** Registers all four adapter endpoints. Call this once from [startAdapterServer]. */
@@ -75,10 +73,11 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
     authenticate(ADAPTER_AUTH_SCHEME.takeIf { env.authEnabled }) {
         get("/status") {
             val result: AdapterStatus = handler.status()
+            val requestHost: String = call.request.host().ifBlank { "unknown" }
             call.respond(
                 PoolStatusResponse(
                     pool = result.pool,
-                    access = result.access ?: handler.defaultAccess(env),
+                    access = result.access ?: handler.defaultAccess(env, requestHost),
                     inventory = result.inventory,
                     capabilities = handler.capabilities(env),
                     metadata = result.metadata
@@ -99,11 +98,14 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
                 "Adapter returned acquiredCount > 0 but leaseId is null — this is a bug in the adapter implementation"
             }
 
+            val requestHost: String = call.request.host().ifBlank { "unknown" }
+            val responseAccess: AdapterAccess = (result.access ?: handler.defaultAccess(env, requestHost))
+                .replaceUnknownHosts(requestHost)
             call.respond(
                 AcquireResponse(
                     leaseId = leaseId,
                     acquiredCount = result.acquiredCount,
-                    access = result.access ?: handler.defaultAccess(env),
+                    access = responseAccess,
                     inventory = result.inventory,
                     capabilities = handler.capabilities(env),
                     metadata = result.metadata
@@ -125,4 +127,16 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
             }
         }
     }
+}
+
+private fun AdapterAccess.replaceUnknownHosts(requestHost: String): AdapterAccess {
+    return copy(
+        connections = connections.map { connection ->
+            if (connection.host == "unknown") {
+                connection.copy(host = requestHost)
+            } else {
+                connection
+            }
+        }
+    )
 }

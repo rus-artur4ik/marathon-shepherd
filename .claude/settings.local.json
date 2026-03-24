@@ -10,7 +10,14 @@
       "Bash(./gradlew compileKotlin)",
       "WebSearch",
       "Bash(./gradlew build:*)",
-      "Bash(./gradlew clean:*)"
+      "Bash(./gradlew clean:*)",
+      "Bash(docker build:*)",
+      "Bash(docker push:*)",
+      "Bash(./gradlew :manager:service:test :adapter:shepherd-adb:test :adapter:shepherd-cuttlefish:test :adapter:shepherd-farm:test)",
+      "Bash(bash scripts/run_tests.sh)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/run_tests.py''\\).read\\(\\)\\); print\\(''syntax OK''\\)\")",
+      "Bash(bash scripts/run_tests.sh --skip-real-device-integration --skip-public-ui-integration --skip-docker-integration)",
+      "Bash(chmod +x /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/integration/e2e_jenkins.sh)"
     ]
   }
 }

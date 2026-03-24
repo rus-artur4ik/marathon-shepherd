@@ -86,7 +86,15 @@ class SessionManager(
                     ttlSeconds = ttlSeconds
                 )
                 if (result.acquiredCount > 0) {
-                    leases.add(SessionLease(provider.name, result.leaseId, result.acquiredCount))
+                    val leaseAdbServers: List<dev.shepherd.domain.model.AdbServer> = resolveLeaseAdbServers(provider, result)
+                    leases.add(
+                        SessionLease(
+                            providerName = provider.name,
+                            leaseId = result.leaseId,
+                            count = result.acquiredCount,
+                            adbServers = leaseAdbServers
+                        )
+                    )
                     stateStore.saveSessionLease(sessionId, provider.name, result.leaseId, result.acquiredCount)
                     remaining -= result.acquiredCount
                     logger.info("Provider '${provider.name}': acquired ${result.acquiredCount} devices")
@@ -101,11 +109,7 @@ class SessionManager(
             if (totalAllocated < requestedDevices) {
                 logger.warn("Session $sessionId: only $totalAllocated of $requestedDevices devices available")
             }
-
-            val activeProviderNames = leases.map { it.providerName }.toSet()
-            val adbServers = providers
-                .filter { it.name in activeProviderNames }
-                .map { it.adbServer }
+            val adbServers = leases.flatMap { lease -> lease.adbServers }.distinct()
 
             val session = pendingSession.copy(
                 status = SessionStatus.READY,
@@ -143,6 +147,20 @@ class SessionManager(
             }
         }
         stateStore.updateSessionStatus(sessionId, FAILED)
+    }
+
+    private fun resolveLeaseAdbServers(
+        provider: dev.shepherd.domain.provider.DeviceProvider,
+        result: dev.shepherd.domain.provider.AcquireResult
+    ): List<dev.shepherd.domain.model.AdbServer> {
+        if (result.adbServers.isNotEmpty()) {
+            return result.adbServers
+        }
+        val accessIsolation: String? = provider.capabilities.metadata["accessIsolation"]
+        require(accessIsolation != "lease-scoped-proxy") {
+            "Provider '${provider.name}' acquired devices but did not return lease-scoped adbServers"
+        }
+        return listOf(provider.adbServer)
     }
 
     suspend fun getSession(sessionId: String): Session? {
@@ -205,5 +223,6 @@ class SessionManager(
 private data class SessionLease(
     val providerName: String,
     val leaseId: String,
-    val count: Int
+    val count: Int,
+    val adbServers: List<dev.shepherd.domain.model.AdbServer>
 )

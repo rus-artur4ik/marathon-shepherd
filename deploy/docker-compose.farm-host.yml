@@ -1,7 +1,6 @@
 # Deploy this on any host that will run Android emulators (farm-server + shepherd-farm).
 #
 # Required env vars:
-#   HOST_IP        — the LAN IP published as the preferred ADB endpoint for this host
 #   ADAPTER_SECRET — shared secret between this adapter and the Manager
 #                    Must match the `secret` field in msh.yaml on the Manager side.
 #                    Generate with: openssl rand -hex 32
@@ -11,9 +10,12 @@
 #   FARM_SUPPORTED_API_LEVELS — optional comma-separated list like 33,34,35
 #
 # Usage:
-#   HOST_IP=192.168.1.20 ADAPTER_SECRET=<token> docker compose -f docker-compose.farm-host.yml up -d
+#   ADAPTER_SECRET=<token> docker compose -f docker-compose.farm-host.yml up -d
 #
-# Tip: keep port 5037 reachable only from trusted CI / Marathon runners.
+# Tip: manager uses the provider URL host from msh.yaml as the default adb host.
+# Tip: set `accessHost` in msh.yaml only if direct device access must use a different host.
+# Tip: publish host port 5038 to avoid conflicts with a host-level adb already bound to 5037.
+# Tip: keep port 5038 reachable only from trusted CI / Marathon runners.
 
 networks:
   shepherd-farm:
@@ -27,7 +29,7 @@ services:
       - shepherd-farm
     restart: unless-stopped
     ports:
-      - "5037:5037"
+      - "5038:5037"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
@@ -39,7 +41,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-farm
-    image: ghcr.io/marathon-org/shepherd-farm:latest
+    image: rusartur4ik/shepherd-farm:latest
     container_name: shepherd-farm
     networks:
       - shepherd-farm
@@ -48,8 +50,7 @@ services:
       ADAPTER_PORT: "7037"
       FARM_SERVER_HOST: "farm-server"
       FARM_SERVER_PORT: "8080"
-      ADAPTER_ADB_HOST: "${HOST_IP:?HOST_IP must be set}"
-      ADAPTER_ADB_PORT: "5037"
+      ADAPTER_ADB_PORT: "5038"
       ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
     ports:
       - "7037:7037"

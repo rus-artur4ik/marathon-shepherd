@@ -20,6 +20,12 @@ data class ProviderConfig(
     /** Base URL of the adapter process on the remote host, e.g. http://192.168.1.10:8091 */
     val url: String,
     /**
+     * Optional host exposed to CI/test runners for direct TCP access.
+     * Defaults to the host part of [url].
+     * Set this only when the device access endpoint lives on a different host than the adapter control plane.
+     */
+    val accessHost: String? = null,
+    /**
      * Bearer token that must match ADAPTER_SECRET on the adapter side.
      * Blank means the adapter is running without auth (local dev only).
      */

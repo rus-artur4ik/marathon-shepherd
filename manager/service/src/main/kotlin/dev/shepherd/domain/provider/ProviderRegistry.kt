@@ -1,9 +1,10 @@
 package dev.shepherd.domain.provider
 
-import dev.shepherd.domain.model.ShepherdConfig
 import dev.shepherd.domain.model.ProviderConfig
+import dev.shepherd.domain.model.ShepherdConfig
 import dev.shepherd.infra.config.ConfigStore
-import io.ktor.client.HttpClient
+import io.ktor.client.*
+import io.ktor.http.*
 import org.slf4j.LoggerFactory
 
 interface ProviderCatalog {
@@ -86,6 +87,7 @@ private fun createRemoteProvider(providerConfig: ProviderConfig, httpClient: Htt
     return RemoteAdapterProvider(
         name = providerConfig.name,
         adapterUrl = providerConfig.url,
+        accessHost = providerConfig.accessHost?.trim().orEmpty().ifBlank { Url(providerConfig.url).host },
         secret = providerConfig.secret,
         httpClient = httpClient
     )

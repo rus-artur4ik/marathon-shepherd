@@ -24,7 +24,6 @@ COPY --from=builder /build/adapter/shepherd-cuttlefish/build/install/shepherd-cu
 # CVDR must be installed on the host and mounted or included separately.
 # Default: expect cvdr on PATH. Persist lease state with CVDR_LEASES_PATH when possible.
 ENV ADAPTER_PORT=7037
-ENV ADAPTER_ADB_HOST=must-be-set
 ENV ADAPTER_ADB_PORT=6520
 ENV CVDR_PATH=cvdr
 

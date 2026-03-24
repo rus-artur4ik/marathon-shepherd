@@ -1,7 +1,5 @@
 package dev.shepherd.adapter.adb
 
-import dev.shepherd.adapter.api.AdapterDeviceProfile
-import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
 import dev.shepherd.adapter.api.runCommand
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -9,20 +7,19 @@ import org.slf4j.LoggerFactory
 
 /**
  * Thin wrapper around the local adb daemon.
- * Queries attached physical devices — no state, no lifecycle management.
+ * Queries attached physical devices — lease state is handled separately.
  */
 class AdbService(private val adbCommandTimeoutSeconds: Long = 10) {
     private val logger = LoggerFactory.getLogger(AdbService::class.java)
 
-    suspend fun listPhysicalDeviceProfiles(): List<AdapterDeviceProfile> = withContext(Dispatchers.IO) {
+    suspend fun listPhysicalDevices(): List<AdbPhysicalDevice> = withContext(Dispatchers.IO) {
         val result = runCommand("adb", "devices", timeoutSeconds = adbCommandTimeoutSeconds)
         if (!result.isSuccess) {
             logger.warn("adb devices failed (exit ${result.exitCode}): ${result.output}")
             return@withContext emptyList()
         }
-        val devices: List<PhysicalDevice> = parsePhysicalDeviceSerials(result.output)
+        parsePhysicalDeviceSerials(result.output)
             .mapNotNull { serial -> loadPhysicalDevice(serial) }
-        groupProfiles(devices)
     }
 
     suspend fun isAdbReachable(): Boolean = withContext(Dispatchers.IO) {
@@ -37,14 +34,14 @@ class AdbService(private val adbCommandTimeoutSeconds: Long = 10) {
             .filter { serial -> !serial.startsWith("emulator-") }
     }
 
-    private suspend fun loadPhysicalDevice(serial: String): PhysicalDevice? {
+    private suspend fun loadPhysicalDevice(serial: String): AdbPhysicalDevice? {
         val result = runCommand("adb", "-s", serial, "shell", "getprop", timeoutSeconds = adbCommandTimeoutSeconds)
         if (!result.isSuccess) {
             logger.warn("adb getprop failed for $serial (exit ${result.exitCode}): ${result.output}")
             return null
         }
         val properties: Map<String, String> = parseGetpropOutput(result.output)
-        return PhysicalDevice(
+        return AdbPhysicalDevice(
             serial = serial,
             apiLevel = properties["ro.build.version.sdk"],
             manufacturer = properties["ro.product.manufacturer"],
@@ -70,30 +67,9 @@ class AdbService(private val adbCommandTimeoutSeconds: Long = 10) {
             }
             .toMap()
     }
-
-    private fun groupProfiles(devices: List<PhysicalDevice>): List<AdapterDeviceProfile> {
-        return devices.groupBy { device ->
-            DeviceProfileKey(
-                apiLevel = device.apiLevel,
-                manufacturer = device.manufacturer,
-                model = device.model,
-                abi = device.abi
-            )
-        }.map { (key, groupedDevices) ->
-            AdapterDeviceProfile(
-                deviceType = DEVICE_TYPE_PHYSICAL,
-                apiLevel = key.apiLevel,
-                manufacturer = key.manufacturer,
-                model = key.model,
-                abi = key.abi,
-                count = groupedDevices.size,
-                metadata = mapOf("serials" to groupedDevices.joinToString(",") { device -> device.serial })
-            )
-        }.sortedWith(compareBy({ it.apiLevel ?: "" }, { it.manufacturer ?: "" }, { it.model ?: "" }, { it.abi ?: "" }))
-    }
 }
 
-private data class PhysicalDevice(
+data class AdbPhysicalDevice(
     val serial: String,
     val apiLevel: String?,
     val manufacturer: String?,
@@ -101,7 +77,7 @@ private data class PhysicalDevice(
     val abi: String?
 )
 
-private data class DeviceProfileKey(
+data class DeviceProfileKey(
     val apiLevel: String?,
     val manufacturer: String?,
     val model: String?,

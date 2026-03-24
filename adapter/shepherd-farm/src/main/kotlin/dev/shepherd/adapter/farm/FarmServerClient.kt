@@ -45,11 +45,11 @@ class FarmServerClient(
                 json.decodeFromString<FarmAcquireResult>(response.bodyAsText())
             } else {
                 logger.error("Farm acquire failed: ${response.status} — ${response.bodyAsText()}")
-                FarmAcquireResult(leaseId = "", acquiredCount = 0)
+                FarmAcquireResult(leaseId = null, acquiredCount = 0)
             }
         } catch (e: Exception) {
             logger.error("Farm acquire error: ${e.message}")
-            FarmAcquireResult(leaseId = "", acquiredCount = 0)
+            FarmAcquireResult(leaseId = null, acquiredCount = 0)
         }
     }
 
@@ -79,4 +79,4 @@ data class FarmStatus(val available: Int, val busy: Int, val total: Int)
 private data class FarmAcquireRequest(val count: Int, val apiLevel: String, val ttlSeconds: Long)
 
 @Serializable
-data class FarmAcquireResult(val leaseId: String, val acquiredCount: Int)
+data class FarmAcquireResult(val leaseId: String?, val acquiredCount: Int)

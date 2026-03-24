@@ -1,12 +1,16 @@
+# Component test stack — builds and validates local Docker images.
+# Images are built from the local Dockerfiles (repo root context).
+# Run from repo root: docker compose -f deploy/docker-compose.smoke.yml up --build
+
 services:
   adb:
     image: ubuntu:24.04
-    container_name: msh-integration-adb
+    container_name: msh-smoke-adb
     command: >
       bash -lc "apt-get update && apt-get install -y --no-install-recommends adb
       && adb -a server nodaemon"
     networks:
-      - msh-integration
+      - msh-smoke
     healthcheck:
       test: ["CMD", "bash", "-lc", "adb devices >/dev/null 2>&1"]
       interval: 5s
@@ -15,7 +19,7 @@ services:
 
   farm-server:
     image: python:3.12-alpine
-    container_name: msh-integration-farm-server
+    container_name: msh-smoke-farm-server
     command: ["python", "/opt/integration/farm_server.py"]
     environment:
       FARM_SERVER_HOST: "0.0.0.0"
@@ -25,7 +29,7 @@ services:
     volumes:
       - "./integration:/opt/integration:ro"
     networks:
-      - msh-integration
+      - msh-smoke
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
       interval: 5s
@@ -36,8 +40,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-adb
-    image: msh-shepherd-adb-integration:latest
-    container_name: msh-integration-shepherd-adb
+    container_name: msh-smoke-shepherd-adb
     depends_on:
       adb:
         condition: service_healthy
@@ -45,9 +48,11 @@ services:
       ADAPTER_PORT: "7037"
       ADAPTER_ADB_PORT: "5037"
       ADB_SERVER_SOCKET: "tcp:adb:5037"
-      ADAPTER_SECRET: "integration-secret-adb"
+      ADAPTER_SECRET: "smoke-secret-adb"
     networks:
-      - msh-integration
+      - msh-smoke
+    ports:
+      - "17037:7037"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
       interval: 5s
@@ -58,8 +63,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-farm
-    image: msh-shepherd-farm-integration:latest
-    container_name: msh-integration-shepherd-farm
+    container_name: msh-smoke-shepherd-farm
     depends_on:
       farm-server:
         condition: service_healthy
@@ -69,9 +73,11 @@ services:
       FARM_SERVER_HOST: "farm-server"
       FARM_SERVER_PORT: "8080"
       FARM_SUPPORTED_API_LEVELS: "34"
-      ADAPTER_SECRET: "integration-secret-farm"
+      ADAPTER_SECRET: "smoke-secret-farm"
     networks:
-      - msh-integration
+      - msh-smoke
+    ports:
+      - "17038:7037"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
       interval: 5s
@@ -82,21 +88,22 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-cuttlefish
-    image: msh-shepherd-cuttlefish-integration:latest
-    container_name: msh-integration-shepherd-cuttlefish
+    container_name: msh-smoke-shepherd-cuttlefish
     environment:
       ADAPTER_PORT: "7037"
       ADAPTER_ADB_PORT: "6520"
-      ADAPTER_SECRET: "integration-secret-cuttlefish"
+      ADAPTER_SECRET: "smoke-secret-cuttlefish"
       CVDR_PATH: "/opt/integration/cvdr"
       CVDR_LEASES_PATH: "/var/lib/cvdr/leases.json"
       CVDR_STATE_PATH: "/var/lib/cvdr/state.json"
       CVDR_INITIAL_INSTANCES: "2"
     volumes:
       - "./integration/cvdr:/opt/integration/cvdr:ro"
-      - msh-integration-cvdr:/var/lib/cvdr
+      - msh-smoke-cvdr:/var/lib/cvdr
     networks:
-      - msh-integration
+      - msh-smoke
+    ports:
+      - "17039:7037"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
       interval: 5s
@@ -107,8 +114,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: msh-manager-integration:latest
-    container_name: msh-integration-manager
+    container_name: msh-smoke-manager
     depends_on:
       shepherd-adb:
         condition: service_healthy
@@ -121,12 +127,12 @@ services:
       MSH_CONFIG: "/etc/msh/msh.yaml"
       MSH_DATA_DIR: "/var/lib/msh"
     volumes:
-      - "./integration/msh.integration.yaml:/etc/msh/msh.yaml:ro"
-      - msh-integration-data:/var/lib/msh
+      - "./integration/msh.smoke.yaml:/etc/msh/msh.yaml:ro"
+      - msh-smoke-data:/var/lib/msh
     ports:
       - "16037:6037"
     networks:
-      - msh-integration
+      - msh-smoke
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:6037/live"]
       interval: 5s
@@ -134,9 +140,9 @@ services:
       retries: 20
 
 volumes:
-  msh-integration-data:
-  msh-integration-cvdr:
+  msh-smoke-data:
+  msh-smoke-cvdr:
 
 networks:
-  msh-integration:
+  msh-smoke:
     driver: bridge
