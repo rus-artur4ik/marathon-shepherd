@@ -18,3 +18,4 @@ __pycache__/
 .msh-sandbox/
 .msh-runner-venv/
 scripts/public_ui/apks/
+/AGENTS.md

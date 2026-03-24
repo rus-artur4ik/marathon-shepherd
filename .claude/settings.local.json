@@ -17,7 +17,27 @@
       "Bash(bash scripts/run_tests.sh)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/run_tests.py''\\).read\\(\\)\\); print\\(''syntax OK''\\)\")",
       "Bash(bash scripts/run_tests.sh --skip-real-device-integration --skip-public-ui-integration --skip-docker-integration)",
-      "Bash(chmod +x /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/integration/e2e_jenkins.sh)"
+      "Bash(chmod +x /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/integration/e2e_jenkins.sh)",
+      "Bash(python3 -c \"import scripts.run_tests\")",
+      "Bash(python3 scripts/run_tests.py --help)",
+      "Bash(groovy scripts/integration/jenkins_unit_test.groovy)",
+      "Bash(python3 -m py_compile scripts/run_tests.py)",
+      "Bash(chmod +x /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/integration/e2e_docker.sh)",
+      "Bash(./gradlew :manager:service:compileKotlin --no-daemon -q)",
+      "Bash(./gradlew :manager:service:test --no-daemon --tests \"dev.shepherd.domain.SessionManagerTest\" -q)",
+      "Bash(./gradlew :manager:service:test --no-daemon --tests \"dev.shepherd.domain.SessionManagerTest\")",
+      "Bash(grep -v '^$')",
+      "Bash(./gradlew :manager:service:test --no-daemon -q)",
+      "Bash(./gradlew :manager:service:test --no-daemon)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/run_tests.py''\\).read\\(\\)\\); print\\(''run_tests.py: syntax OK''\\)\")",
+      "Bash(./gradlew :manager:service:test --no-daemon --continue)",
+      "Bash(bash -n scripts/integration/e2e_docker.sh)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/run_tests.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python3 -c \":*)",
+      "Bash(find /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts -type f -exec ls -lh {})",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''/Users/rus_artur4ik/IdeaProjects/marathon-shepherd/tests/run_tests.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(grep -E \"^\\(scripts|tests\\)$\")",
+      "Bash(echo \"exit:$?\")"
     ]
   }
 }

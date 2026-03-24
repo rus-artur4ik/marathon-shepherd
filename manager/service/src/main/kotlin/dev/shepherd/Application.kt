@@ -9,28 +9,23 @@ import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.state.StateStore
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
-import io.ktor.http.HttpStatusCode
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.Application
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.callloging.CallLogging
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.plugins.statuspages.StatusPages
-import io.ktor.server.response.respond
-import io.ktor.server.routing.routing
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.application.*
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 
 private val logger = LoggerFactory.getLogger("dev.shepherd.Application")
 private const val DEFAULT_MANAGER_PORT: Int = 6037
@@ -57,7 +52,7 @@ fun main(args: Array<String>) {
     }
     val providerRegistry = ProviderRegistry(configStore, httpClient)
     val deviceAllocator = DeviceAllocator(providerRegistry)
-    val sessionManager = SessionManager(providerRegistry, stateStore)
+    val sessionManager = SessionManager(providerRegistry, stateStore, configStore)
 
     val cleanupScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     cleanupScope.launch {

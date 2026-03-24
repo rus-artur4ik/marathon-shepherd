@@ -2,24 +2,35 @@ package dev.shepherd.domain
 
 import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
 import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
+import dev.shepherd.domain.model.NoDeviceMode
+import dev.shepherd.domain.model.NoDeviceStrategyConfig
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.domain.model.SessionStatus.FAILED
 import dev.shepherd.domain.provider.ProviderCatalog
+import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.state.StateStore
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.*
 
 private const val RELEASE_TIMEOUT_MS = 10_000L
+private const val WAIT_POLL_INTERVAL_MS = 2_000L
 private val SUPPORTED_DEVICE_TYPES: Set<String> = linkedSetOf(DEVICE_TYPE_PHYSICAL, DEVICE_TYPE_EMULATOR)
 private const val SUPPORTED_DEVICE_TYPES_TEXT = "physical, emulator"
 
 class SessionManager(
     private val providerCatalog: ProviderCatalog,
-    private val stateStore: StateStore
+    private val stateStore: StateStore,
+    /**
+     * Optional config store. When provided the [NoDeviceStrategyConfig] is read from it on
+     * every [createSession] call (supports hot-reload). When null the strategy defaults to
+     * [NoDeviceMode.FAIL_IMMEDIATELY], preserving backward-compatible behaviour.
+     */
+    private val configStore: ConfigStore? = null,
 ) {
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
 
@@ -60,52 +71,37 @@ class SessionManager(
         logger.info("Creating session $sessionId: $requestedDevices devices, API $apiLevel")
         stateStore.saveSession(pendingSession)
 
-        var remaining = requestedDevices
         val leases = mutableListOf<SessionLease>()
         try {
-            for (provider in providers) {
-                if (remaining <= 0) break
-                val availablePool = try {
-                    provider.queryDevices()
-                } catch (e: Exception) {
-                    logger.warn("Provider '${provider.name}' inventory refresh failed: ${e.message}")
-                    continue
+            val strategy = configStore?.loadConfig()?.noDeviceStrategy ?: NoDeviceStrategyConfig()
+            when (strategy.mode) {
+                NoDeviceMode.FAIL_IMMEDIATELY -> {
+                    // leases is passed by reference so partial acquisitions remain visible to rollback.
+                    attemptAllocation(sessionId, providers, requestedDevices, apiLevel, ttlSeconds, leases)
+                    if (leases.sumOf { it.count } == 0) {
+                        throw IllegalStateException("No devices available for session $sessionId")
+                    }
                 }
-                if (availablePool.available <= 0) {
-                    logger.info("Provider '${provider.name}' has no available devices for session $sessionId")
-                    continue
-                }
-                if (!provider.canAllocateApiLevel(apiLevel)) {
-                    logger.info("Provider '${provider.name}' cannot safely satisfy API $apiLevel for session $sessionId")
-                    continue
-                }
-
-                val result = provider.acquire(
-                    count = minOf(remaining, availablePool.available),
-                    apiLevel = apiLevel,
-                    ttlSeconds = ttlSeconds
-                )
-                if (result.acquiredCount > 0) {
-                    val leaseAdbServers: List<dev.shepherd.domain.model.AdbServer> = resolveLeaseAdbServers(provider, result)
-                    leases.add(
-                        SessionLease(
-                            providerName = provider.name,
-                            leaseId = result.leaseId,
-                            count = result.acquiredCount,
-                            adbServers = leaseAdbServers
+                NoDeviceMode.WAIT_WITH_TIMEOUT -> {
+                    val deadlineMs = System.currentTimeMillis() + strategy.waitTimeoutSeconds * 1_000L
+                    while (leases.sumOf { it.count } == 0) {
+                        attemptAllocation(sessionId, providers, requestedDevices, apiLevel, ttlSeconds, leases)
+                        if (leases.sumOf { it.count } > 0) break
+                        if (System.currentTimeMillis() >= deadlineMs) {
+                            throw IllegalStateException(
+                                "No devices available for session $sessionId after waiting ${strategy.waitTimeoutSeconds}s"
+                            )
+                        }
+                        logger.info(
+                            "No devices for session $sessionId, retrying in ${WAIT_POLL_INTERVAL_MS}ms " +
+                                "(timeout in ${(deadlineMs - System.currentTimeMillis()) / 1_000}s)…"
                         )
-                    )
-                    stateStore.saveSessionLease(sessionId, provider.name, result.leaseId, result.acquiredCount)
-                    remaining -= result.acquiredCount
-                    logger.info("Provider '${provider.name}': acquired ${result.acquiredCount} devices")
+                        delay(WAIT_POLL_INTERVAL_MS)
+                    }
                 }
             }
 
             val totalAllocated = leases.sumOf { it.count }
-            if (totalAllocated == 0) {
-                throw IllegalStateException("No devices available for session $sessionId")
-            }
-
             if (totalAllocated < requestedDevices) {
                 logger.warn("Session $sessionId: only $totalAllocated of $requestedDevices devices available")
             }
@@ -126,6 +122,61 @@ class SessionManager(
                 is IllegalArgumentException -> throw e
                 is IllegalStateException -> throw e
                 else -> throw IllegalStateException("Failed to create session $sessionId", e)
+            }
+        }
+    }
+
+    /**
+     * Attempts a single allocation pass across [providers], appending acquired leases to [leases].
+     *
+     * Mutates [leases] in place so that the caller's catch block always sees partial acquisitions
+     * and can roll them back if anything goes wrong (e.g. a later [DeviceProvider.acquire] throws).
+     *
+     * Side-effects: calls [StateStore.saveSessionLease] for every lease acquired.
+     */
+    private suspend fun attemptAllocation(
+        sessionId: String,
+        providers: List<dev.shepherd.domain.provider.DeviceProvider>,
+        requestedDevices: Int,
+        apiLevel: String,
+        ttlSeconds: Long,
+        leases: MutableList<SessionLease>,
+    ) {
+        var remaining = requestedDevices - leases.sumOf { it.count }
+        for (provider in providers) {
+            if (remaining <= 0) break
+            val availablePool = try {
+                provider.queryDevices()
+            } catch (e: Exception) {
+                logger.warn("Provider '${provider.name}' inventory refresh failed: ${e.message}")
+                continue
+            }
+            if (availablePool.available <= 0) {
+                logger.info("Provider '${provider.name}' has no available devices for session $sessionId")
+                continue
+            }
+            if (!provider.canAllocateApiLevel(apiLevel)) {
+                logger.info("Provider '${provider.name}' cannot safely satisfy API $apiLevel for session $sessionId")
+                continue
+            }
+            val result = provider.acquire(
+                count = minOf(remaining, availablePool.available),
+                apiLevel = apiLevel,
+                ttlSeconds = ttlSeconds
+            )
+            if (result.acquiredCount > 0) {
+                val leaseAdbServers = resolveLeaseAdbServers(provider, result)
+                leases.add(
+                    SessionLease(
+                        providerName = provider.name,
+                        leaseId = result.leaseId,
+                        count = result.acquiredCount,
+                        adbServers = leaseAdbServers
+                    )
+                )
+                stateStore.saveSessionLease(sessionId, provider.name, result.leaseId, result.acquiredCount)
+                remaining -= result.acquiredCount
+                logger.info("Provider '${provider.name}': acquired ${result.acquiredCount} devices")
             }
         }
     }

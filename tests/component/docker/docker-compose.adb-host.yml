@@ -1,0 +1,68 @@
+# Deploy this on any host with physical Android devices connected via USB.
+#
+# Required env vars (set in a .env file or export before running):
+#   ADAPTER_SECRET — shared secret between this adapter and the Manager
+#                    Must match the `secret` field in msh.yaml on the Manager side.
+#                    Generate with: openssl rand -hex 32
+#
+# Usage:
+#   ADAPTER_SECRET=<token> docker compose -f docker-compose.adb-host.yml up -d
+#
+# Tip: manager uses the provider URL host from msh.yaml as the default adb host.
+# Tip: set `accessHost` in msh.yaml only if direct device access must use a different host.
+# Tip: publish host port 5038 for the upstream adb daemon to avoid conflicts with a host-level adb on 5037.
+# Tip: also publish the lease proxy range (7600-7699 below) so Marathon can reach session-scoped adb endpoints.
+# Tip: keep both 5038 and the proxy range reachable only from trusted CI / Marathon runners.
+# Tip: store secrets in a .env file (chmod 600) and never commit it to version control.
+
+networks:
+  shepherd-adb:
+    driver: bridge
+
+volumes:
+  shepherd-adb-state:
+
+services:
+  adb:
+    image: ubuntu:24.04
+    container_name: adb-server
+    command: >
+      bash -c "apt-get update && apt-get install -y --no-install-recommends adb
+      && adb -a server nodaemon"
+    privileged: true
+    devices:
+      - /dev/bus/usb
+    networks:
+      - shepherd-adb
+    restart: unless-stopped
+    ports:
+      - "5038:5037"
+
+  shepherd-adb:
+    build:
+      context: ../../..
+      dockerfile: tests/component/docker/Dockerfile.shepherd-adb
+    image: rusartur4ik/shepherd-adb:latest
+    container_name: shepherd-adb
+    networks:
+      - shepherd-adb
+    restart: unless-stopped
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_PORT: "5038"
+      ADB_PROXY_PORT_RANGE: "7600-7699"
+      ADB_LEASES_PATH: "/var/lib/msh/adb-leases.json"
+      ADB_SERVER_SOCKET: "tcp:adb:5037"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+    volumes:
+      - shepherd-adb-state:/var/lib/msh
+    ports:
+      - "7037:7037"
+      - "7600-7699:7600-7699"
+    depends_on:
+      - adb
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

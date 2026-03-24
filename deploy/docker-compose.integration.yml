@@ -20,8 +20,10 @@ services:
     environment:
       FARM_SERVER_HOST: "0.0.0.0"
       FARM_SERVER_PORT: "8080"
-      FARM_SERVER_TOTAL: "3"
-      FARM_SERVER_AVAILABLE: "3"
+      # Override with env vars to change device availability between e2e scenarios.
+      # e.g. FARM_SERVER_TOTAL=3 FARM_SERVER_AVAILABLE=0 docker compose up -d farm-server
+      FARM_SERVER_TOTAL: "${FARM_SERVER_TOTAL:-3}"
+      FARM_SERVER_AVAILABLE: "${FARM_SERVER_AVAILABLE:-3}"
     volumes:
       - "./integration:/opt/integration:ro"
     networks:
@@ -118,10 +120,13 @@ services:
         condition: service_healthy
     environment:
       MSH_PORT: "6037"
-      MSH_CONFIG: "/etc/msh/msh.yaml"
+      # Set MSH_SCENARIO_CONFIG to switch between scenario config files without rebuilding.
+      # All files in ./integration/ are available as /etc/msh/<filename>.
+      # e.g. MSH_SCENARIO_CONFIG=/etc/msh/msh.scenario-farm-only.yaml docker compose up -d manager
+      MSH_CONFIG: "${MSH_SCENARIO_CONFIG:-/etc/msh/msh.integration.yaml}"
       MSH_DATA_DIR: "/var/lib/msh"
     volumes:
-      - "./integration/msh.integration.yaml:/etc/msh/msh.yaml:ro"
+      - "./integration:/etc/msh:ro"
       - msh-integration-data:/var/lib/msh
     ports:
       - "16037:6037"

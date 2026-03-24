@@ -4,8 +4,35 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class ShepherdConfig(
-    val providers: List<ProviderConfig>
+    val providers: List<ProviderConfig>,
+    /**
+     * Controls what happens when a new session is requested but no devices are available.
+     * Defaults to [NoDeviceMode.FAIL_IMMEDIATELY] (original behaviour).
+     */
+    val noDeviceStrategy: NoDeviceStrategyConfig = NoDeviceStrategyConfig()
 )
+
+/**
+ * Configuration for the no-device strategy.
+ *
+ * @param mode         How to react when zero devices can be allocated.
+ * @param waitTimeoutSeconds  Maximum time to wait in [NoDeviceMode.WAIT_WITH_TIMEOUT] mode.
+ *                            Ignored in [NoDeviceMode.FAIL_IMMEDIATELY] mode.
+ */
+@Serializable
+data class NoDeviceStrategyConfig(
+    val mode: NoDeviceMode = NoDeviceMode.FAIL_IMMEDIATELY,
+    val waitTimeoutSeconds: Long = 60
+)
+
+/** Strategy applied when a session request finds zero available devices. */
+@Serializable
+enum class NoDeviceMode {
+    /** Return HTTP 503 immediately (default). */
+    FAIL_IMMEDIATELY,
+    /** Keep polling providers until at least one device becomes free, or timeout expires. */
+    WAIT_WITH_TIMEOUT,
+}
 
 /**
  * A provider is any host running a Shepherd adapter (shepherd-adb, shepherd-farm, or shepherd-cuttlefish).

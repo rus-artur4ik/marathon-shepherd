@@ -1,0 +1,35 @@
+# Shepherd Cuttlefish Adapter
+# Build from repo root:  docker build -f deploy/Dockerfile.shepherd-cuttlefish -t shepherd-cuttlefish .
+
+# ── Stage 1: Build ──────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jdk AS builder
+
+WORKDIR /build
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties* ./
+COPY gradle/ gradle/
+COPY adapter/ adapter/
+COPY manager/ manager/
+
+RUN chmod +x gradlew && ./gradlew :adapter:shepherd-cuttlefish:installDist --no-daemon
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/adapter/shepherd-cuttlefish/build/install/shepherd-cuttlefish /opt/shepherd-cuttlefish
+
+# CVDR must be installed on the host and mounted or included separately.
+# Default: expect cvdr on PATH. Persist lease state with CVDR_LEASES_PATH when possible.
+ENV ADAPTER_PORT=7037
+ENV ADAPTER_ADB_PORT=6520
+ENV CVDR_PATH=cvdr
+
+EXPOSE 7037
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:7037/health || exit 1
+
+ENTRYPOINT ["/opt/shepherd-cuttlefish/bin/shepherd-cuttlefish"]

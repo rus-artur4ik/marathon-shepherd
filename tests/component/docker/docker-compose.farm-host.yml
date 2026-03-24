@@ -1,0 +1,64 @@
+# Deploy this on any host that will run Android emulators (farm-server + shepherd-farm).
+#
+# Required env vars:
+#   ADAPTER_SECRET — shared secret between this adapter and the Manager
+#                    Must match the `secret` field in msh.yaml on the Manager side.
+#                    Generate with: openssl rand -hex 32
+# Optional env vars:
+#   FARM_SERVER_PORT — local farm-server port (default: 8080)
+#   FARM_SERVER_HOST — defaults to 127.0.0.1; set to service DNS in container setups
+#   FARM_SUPPORTED_API_LEVELS — optional comma-separated list like 33,34,35
+#
+# Usage:
+#   ADAPTER_SECRET=<token> docker compose -f docker-compose.farm-host.yml up -d
+#
+# Tip: manager uses the provider URL host from msh.yaml as the default adb host.
+# Tip: set `accessHost` in msh.yaml only if direct device access must use a different host.
+# Tip: publish host port 5038 to avoid conflicts with a host-level adb already bound to 5037.
+# Tip: keep port 5038 reachable only from trusted CI / Marathon runners.
+
+networks:
+  shepherd-farm:
+    driver: bridge
+
+services:
+  farm-server:
+    image: ghcr.io/marathon-org/farm-server:latest
+    container_name: farm-server
+    networks:
+      - shepherd-farm
+    restart: unless-stopped
+    ports:
+      - "5038:5037"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  shepherd-farm:
+    build:
+      context: ../../..
+      dockerfile: tests/component/docker/Dockerfile.shepherd-farm
+    image: rusartur4ik/shepherd-farm:latest
+    container_name: shepherd-farm
+    networks:
+      - shepherd-farm
+    restart: unless-stopped
+    environment:
+      ADAPTER_PORT: "7037"
+      FARM_SERVER_HOST: "farm-server"
+      FARM_SERVER_PORT: "8080"
+      ADAPTER_ADB_PORT: "5038"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+    ports:
+      - "7037:7037"
+    depends_on:
+      farm-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
