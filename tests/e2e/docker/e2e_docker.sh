@@ -3,12 +3,13 @@
 #
 # Spins up the full integration stack once, then executes every scenario against
 # the running stack.  Each scenario may restart individual services with different
-# environment variables (e.g. farm device count, manager config file).
+# environment variables (e.g. farm device count) or switch the manager config
+# live via PUT /api/v1/config — no container restart required.
 #
 # Run from repo root:
 #   tests/e2e/docker/e2e_docker.sh
 #
-# Prerequisites: docker, docker compose, curl, jq
+# Prerequisites: docker, docker compose, curl, jq, python3
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -80,6 +81,90 @@ release_session() {
 
 response_field() { jq -r "${1} // empty" "$RESPONSE_FILE" 2>/dev/null; }
 
+# ── Config helper ─────────────────────────────────────────────────────────────
+
+# Convert a YAML file to JSON via python3.
+# Uses PyYAML when available; falls back to a minimal built-in parser that
+# covers the specific scenario YAML structure used in tests/integration/.
+yaml_file_to_json() {
+    local yaml_file="$1"
+    python3 - "$yaml_file" <<'PYEOF'
+import json, re, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    text = f.read()
+
+try:
+    import yaml
+    data = yaml.safe_load(text) or {}
+    if "providers" not in data:
+        data["providers"] = []
+    print(json.dumps(data))
+    sys.exit(0)
+except ImportError:
+    pass
+
+# Minimal fallback: handles providers list and noDeviceStrategy object.
+def coerce(v):
+    v = v.strip().strip('"\'')
+    try:
+        return int(v)
+    except ValueError:
+        return v
+
+data = {}
+lines = [l.rstrip() for l in text.splitlines()
+         if l.strip() and not l.strip().startswith("#")]
+i = 0
+while i < len(lines):
+    line = lines[i]
+    m = re.match(r"^(\w+):\s*(.*)", line)
+    if not m:
+        i += 1
+        continue
+    key, rest = m.group(1), m.group(2).strip()
+    if rest == "[]":
+        data[key] = []
+        i += 1
+        continue
+    if rest:
+        i += 1
+        continue
+    # Block value below this key
+    i += 1
+    block_list = []
+    block_obj = {}
+    current_item = None
+    while i < len(lines) and lines[i].startswith("  "):
+        sub = lines[i]
+        li = re.match(r"  -\s+(\w+):\s*(.*)", sub)
+        kv = re.match(r"\s+(\w+):\s*(.*)", sub)
+        if li:
+            if current_item is not None:
+                block_list.append(current_item)
+            current_item = {li.group(1): coerce(li.group(2))}
+        elif kv:
+            if current_item is not None:
+                current_item[kv.group(1)] = coerce(kv.group(2))
+            else:
+                block_obj[kv.group(1)] = coerce(kv.group(2))
+        i += 1
+    if current_item is not None:
+        block_list.append(current_item)
+    if block_list:
+        data[key] = block_list
+    elif block_obj:
+        data[key] = block_obj
+    else:
+        data[key] = []
+
+if "providers" not in data:
+    data["providers"] = []
+print(json.dumps(data))
+PYEOF
+}
+
 # ── Service control ───────────────────────────────────────────────────────────
 
 # Restart the farm-server with a specific device count.
@@ -91,12 +176,50 @@ restart_farm() {
     sleep 1  # brief settle time for shepherd-farm's next query
 }
 
-# Restart the manager with a specific scenario config file (path inside the container).
+# Release all READY/PENDING sessions so PUT /api/v1/config is never blocked
+# by a leaked session from a previous scenario that got an unexpected 201.
+_release_active_sessions() {
+    local sessions
+    sessions="$(curl -s "$MSH_URL/api/v1/sessions" 2>/dev/null || echo '[]')"
+    while IFS= read -r sid; do
+        [[ -z "$sid" ]] && continue
+        curl -sf -X DELETE "$MSH_URL/api/v1/sessions/$sid" >/dev/null 2>&1 || true
+    done < <(printf '%s' "$sessions" \
+        | jq -r '.[] | select(.status == "READY" or .status == "PENDING") | .id' 2>/dev/null)
+}
+
+# Switch the manager to a scenario config file via PUT /api/v1/config.
+# Accepts a container path like /etc/msh/msh.scenario-farm-only.yaml and maps
+# it to the corresponding host file under tests/integration/.
+# The manager container is NOT restarted — config is hot-applied in place.
 restart_manager() {
     local config="${1:-/etc/msh/msh.integration.yaml}"
+    local filename host_yaml json code put_resp
+    filename="$(basename "$config")"
+    host_yaml="$REPO_ROOT/tests/integration/$filename"
     log "  → manager config: $config"
-    MSH_SCENARIO_CONFIG="$config" $COMPOSE up -d manager >/dev/null 2>&1
-    wait_manager_healthy
+
+    # Clean up any sessions left over from a previous scenario that received an
+    # unexpected 201 so the PUT below is never blocked with HTTP 409.
+    _release_active_sessions
+
+    json="$(yaml_file_to_json "$host_yaml")" || {
+        echo "  ERROR: failed to convert $filename to JSON"
+        return 1
+    }
+
+    put_resp="$(mktemp)"
+    code=$(curl -s -o "$put_resp" -w "%{http_code}" \
+        -X PUT "$MSH_URL/api/v1/config" \
+        -H "Content-Type: application/json" \
+        -d "$json")
+
+    if [[ "$code" != "200" ]]; then
+        echo "  ERROR: PUT /api/v1/config returned HTTP $code — $(cat "$put_resp" 2>/dev/null || true)"
+        rm -f "$put_resp"
+        return 1
+    fi
+    rm -f "$put_resp"
 }
 
 # ── Scenario runner ───────────────────────────────────────────────────────────
@@ -110,6 +233,12 @@ run_scenario() {
         pass "$name"
     else
         fail "$name" "scenario function exited with code $result"
+        echo -e "  ${CYAN}── active config ─────────────────────────────────────────────${NC}"
+        curl -s "$MSH_URL/api/v1/config" 2>/dev/null \
+            | jq '.' 2>/dev/null || echo "    (could not fetch config)"  | sed 's/^/    /'
+        echo -e "  ${CYAN}── manager logs (last 40 lines) ──────────────────────────────${NC}"
+        $COMPOSE logs --tail=40 --no-log-prefix manager 2>/dev/null | sed 's/^/    /'
+        echo -e "  ${CYAN}──────────────────────────────────────────────────────────────${NC}"
     fi
     return 0  # never propagate — run all scenarios even after failures
 }
@@ -217,16 +346,15 @@ scenario_wait_timeout_expires() {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+log "Tearing down any leftover stack from a previous run…"
+$COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
+
 log "Building integration images…"
 $COMPOSE build 2>&1 | tail -5
 
-log "Starting infrastructure services (adb, farm-server, adapters)…"
+log "Starting full integration stack (adapters + manager)…"
 $COMPOSE up -d --wait \
-    adb farm-server shepherd-adb shepherd-farm shepherd-cuttlefish 2>&1 | tail -5
-
-# Clean slate for the manager state volume
-$COMPOSE rm -sf manager >/dev/null 2>&1 || true
-docker volume rm "$(basename "$REPO_ROOT")_msh-integration-data" >/dev/null 2>&1 || true
+    adb farm-server shepherd-adb shepherd-farm shepherd-cuttlefish manager 2>&1 | tail -5
 
 log "Running scenarios…"
 echo ""

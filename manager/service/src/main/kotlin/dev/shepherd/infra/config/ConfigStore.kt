@@ -38,11 +38,18 @@ class ConfigStore(private val configPath: String) {
     fun updateConfig(config: ShepherdConfig) {
         synchronized(lock) {
             val file = File(configPath)
-            val content = Yaml.default.encodeToString(ShepherdConfig.serializer(), config)
-            file.writeText(content)
+            try {
+                val content = Yaml.default.encodeToString(ShepherdConfig.serializer(), config)
+                file.writeText(content)
+                lastModified = file.lastModified()
+                logger.info("Config updated at $configPath")
+            } catch (e: java.io.IOException) {
+                logger.warn(
+                    "Config file '{}' is not writable — change applied in-memory only: {}",
+                    configPath, e.message
+                )
+            }
             cachedConfig = config
-            lastModified = file.lastModified()
-            logger.info("Config updated at $configPath")
         }
     }
 

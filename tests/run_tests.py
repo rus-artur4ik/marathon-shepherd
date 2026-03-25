@@ -340,8 +340,7 @@ class RichPrinter:
             console=self.console,
             refresh_per_second=5,
             auto_refresh=False,
-            screen=True,
-            transient=True,
+            transient=False,
             vertical_overflow="visible",
         )
         self.live.start()
@@ -506,6 +505,97 @@ class RichPrinter:
         else:
             renderables.append(Text("  (waiting for output…)", style="dim"))
         return Group(*renderables)
+
+    def render_footer_final(
+        self,
+        stages: Sequence[StatusEntry],
+        success: bool,
+        elapsed_s: float,
+        failed_stage_logs: "list[tuple[str, Path]]",
+    ):
+        from rich.text import Text
+        from rich.console import Group
+
+        def status_style(status: str) -> str:
+            mapping = {
+                "pending": "black on bright_black",
+                "ok": "black on green",
+                "running": "black on cyan",
+                "skip": "black on yellow",
+                "missing": "white on red",
+                "failed": "white on red",
+            }
+            return mapping.get(status, "default")
+
+        def status_label(status: str) -> str:
+            mapping = {
+                "pending": "WAIT",
+                "ok": "OK",
+                "running": "RUN",
+                "skip": "SKIP",
+                "missing": "FAIL",
+                "failed": "FAIL",
+            }
+            return mapping.get(status, "..")
+
+        def build_status_text(entry: StatusEntry) -> Text:
+            line = Text()
+            line.append(f" {status_label(entry.status)} ", style=status_style(entry.status))
+            line.append("  ")
+            line.append(entry.label, style="white")
+            if entry.detail:
+                line.append(" :: ", style="dim")
+                line.append(entry.detail, style="bright_white")
+            return line
+
+        def fmt_elapsed(s: float) -> str:
+            total = int(s)
+            if total < 60:
+                return f"{total}s"
+            m, sec = divmod(total, 60)
+            return f"{m}m {sec:02d}s"
+
+        available_width = max(self.console.size.width, 40)
+        divider = Text("-" * min(available_width, 72), style="bright_black")
+
+        renderables: list[Text] = [Text("Stages", style="bold cyan")]
+        renderables.extend(build_status_text(entry) for entry in stages)
+        renderables.append(Text(""))
+        renderables.append(divider)
+
+        result_heading = Text()
+        result_heading.append("Result", style="bold cyan")
+        renderables.append(result_heading)
+
+        if success:
+            ok_count = sum(1 for e in stages if e.status == "ok")
+            line = Text()
+            line.append("  ✓ ", style="bold green")
+            line.append(f"All {ok_count} stage(s) passed", style="green")
+            line.append(f"  ·  {fmt_elapsed(elapsed_s)}", style="dim")
+            renderables.append(line)
+        else:
+            failed_count = len(failed_stage_logs)
+            line = Text()
+            line.append("  ✗ ", style="bold red")
+            line.append(f"{failed_count} stage(s) failed: ", style="red")
+            line.append(", ".join(label for label, _ in failed_stage_logs), style="bright_red")
+            renderables.append(line)
+            elapsed_line = Text()
+            elapsed_line.append(f"  elapsed: {fmt_elapsed(elapsed_s)}", style="dim")
+            renderables.append(elapsed_line)
+
+        return Group(*renderables)
+
+    def finish(
+        self,
+        success: bool,
+        stages: Sequence[StatusEntry],
+        elapsed_s: float,
+        failed_stage_logs: "list[tuple[str, Path]]",
+    ) -> None:
+        self.live.update(self.render_footer_final(stages, success, elapsed_s, failed_stage_logs))
+        self.live.stop()
 
 
 class TestRunner:
@@ -869,8 +959,8 @@ class TestRunner:
                 self.failed_stage_logs.append((label, log_file))
                 if not self.options.gradle_continue_enabled:
                     if not self.use_plain_logs and self.rich is not None and not self.report_printed:
-                        self.refresh()
-                        self.rich.stop()
+                        elapsed = time.monotonic() - getattr(self, "_start_time", time.monotonic())
+                        self.rich.finish(False, self.stages, elapsed, self.failed_stage_logs)
                         self.report_printed = True
                     self.print_failure_report()
                     raise RuntimeError(f"{label} failed at: {sub_label}")
@@ -888,6 +978,7 @@ class TestRunner:
             self.plain.print_info(success_message)
 
     def _run_all_stages(self) -> None:
+        self._start_time = time.monotonic()
         repo_env = os.environ.copy()
         if self.use_plain_logs:
             repo_env["NO_COLOR"] = "1"
@@ -984,6 +1075,7 @@ class TestRunner:
                 "[e2e] docker scenarios",
                 "Skipped via --skip-e2e-docker or --skip-environment-integration",
             )
+        elapsed = time.monotonic() - self._start_time
         if self.failed:
             count = len(self.failed_stage_logs)
             failed_names = ", ".join(label for label, _ in self.failed_stage_logs)
@@ -991,8 +1083,7 @@ class TestRunner:
             self.start_stage("Final summary", "collecting final result")
             self.update_stage("failed", summary_msg)
             if not self.use_plain_logs and self.rich is not None and not self.report_printed:
-                self.refresh()
-                self.rich.stop()
+                self.rich.finish(False, self.stages, elapsed, self.failed_stage_logs)
                 self.report_printed = True
             if self.use_plain_logs:
                 self.plain.print_step("Final summary")
@@ -1002,6 +1093,9 @@ class TestRunner:
         else:
             self.start_stage("Final summary", "collecting final result")
             self.update_stage("ok", "All selected test stages passed")
+            if not self.use_plain_logs and self.rich is not None and not self.report_printed:
+                self.rich.finish(True, self.stages, elapsed, self.failed_stage_logs)
+                self.report_printed = True
             if self.use_plain_logs:
                 self.plain.print_step("Final summary")
                 self.plain.print_info("All selected test stages passed")
@@ -1071,8 +1165,8 @@ class TestRunner:
             self.failed_stage_logs.append((label, log_file))
             if not self.options.gradle_continue_enabled:
                 if self.rich is not None and not self.report_printed:
-                    self.refresh()
-                    self.rich.stop()
+                    elapsed = time.monotonic() - getattr(self, "_start_time", time.monotonic())
+                    self.rich.finish(False, self.stages, elapsed, self.failed_stage_logs)
                     self.report_printed = True
                 self.print_failure_report()
                 raise RuntimeError(f"{label} failed")

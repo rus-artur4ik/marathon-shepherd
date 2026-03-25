@@ -57,6 +57,7 @@ if [[ "${MSH_SKIP_JENKINS_HARNESS:-false}" != "true" ]]; then
 fi
 
 log_step "Starting integration stack in docker-compose"
+docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" down -v --remove-orphans >/dev/null 2>&1 || true
 if [[ "${DOCKER_COMPOSE_VERBOSE}" == "true" ]]; then
     docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" up -d --build
 else

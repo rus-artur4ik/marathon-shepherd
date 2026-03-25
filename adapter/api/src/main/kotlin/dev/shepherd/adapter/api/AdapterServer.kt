@@ -74,7 +74,7 @@ fun startAdapterServer(handler: AdapterHandler, env: AdapterEnv) {
     if (!env.authEnabled) logger.warn("ADAPTER_SECRET is not set — running WITHOUT authentication")
 
     embeddedServer(Netty, port = env.port) {
-        install(ContentNegotiation) { json(Json { prettyPrint = true }) }
+        install(ContentNegotiation) { json(Json { prettyPrint = true; encodeDefaults = true }) }
         install(CallLogging)
         configureAdapterAuth(env.secret)
         routing { adapterRoutes(handler, env) }

@@ -37,7 +37,14 @@
       "Bash(find /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts -type f -exec ls -lh {})",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\(''/Users/rus_artur4ik/IdeaProjects/marathon-shepherd/tests/run_tests.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
       "Bash(grep -E \"^\\(scripts|tests\\)$\")",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(ls /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/deploy/Dockerfile*)",
+      "Bash(chmod +x /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/publish_docker.sh)",
+      "Bash(bash -n /Users/rus_artur4ik/IdeaProjects/marathon-shepherd/scripts/publish_docker.sh)",
+      "Bash(bash scripts/publish_docker.sh --tag 0.0.1 --dry-run --latest)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''/Users/rus_artur4ik/IdeaProjects/marathon-shepherd/tests/run_tests.py''\\).read\\(\\)\\); print\\(''syntax OK''\\)\")",
+      "Bash(docker info:*)",
+      "Bash(docker login:*)"
     ]
   }
 }
