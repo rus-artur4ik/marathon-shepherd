@@ -1,0 +1,35 @@
+# Shepherd ADB Adapter
+# Build from repo root:  docker build -f deploy/Dockerfile.shepherd-adb -t shepherd-adb .
+
+# ── Stage 1: Build ──────────────────────────────────────────────────────────────
+# The builder only produces JVM bytecode, so it always runs on the build host's
+# native platform; only the runtime stage below is built per target architecture.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS builder
+
+WORKDIR /build
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties* ./
+COPY gradle/ gradle/
+COPY adapter/ adapter/
+COPY manager/ manager/
+
+RUN chmod +x gradlew && ./gradlew :adapter:shepherd-adb:installDist --no-daemon
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl adb && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/adapter/shepherd-adb/build/install/shepherd-adb /opt/shepherd-adb
+
+ENV ADAPTER_PORT=7037
+ENV ADAPTER_ADB_PORT=5037
+ENV ADB_PROXY_PORT_RANGE=7600-7699
+
+EXPOSE 7037
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:7037/health || exit 1
+
+ENTRYPOINT ["/opt/shepherd-adb/bin/shepherd-adb"]

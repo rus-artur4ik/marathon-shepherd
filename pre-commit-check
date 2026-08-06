@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Convenience wrapper around the test runner, suitable for a pre-commit hook:
+#
+#   ln -s ../../pre-commit-check .git/hooks/pre-commit
+#
+# Any arguments are forwarded to tests/run_tests.sh. For a fast local gate that
+# needs neither Docker nor an attached device, use:
+#
+#   ./pre-commit-check --only unit:kotlin,unit:jenkins
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cd "${SCRIPT_DIR}"
+./tests/run_tests.sh "$@"

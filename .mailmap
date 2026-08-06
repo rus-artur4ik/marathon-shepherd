@@ -1,0 +1,4 @@
+# Collapses the two Git identities used during early development into one author.
+Artur Garifullin <rus_artur4ik@mail.ru>
+Artur Garifullin <rus_artur4ik@mail.ru> <artur240101@gmail.com>
+Artur Garifullin <rus_artur4ik@mail.ru> rus_artur4ik <artur240101@gmail.com>

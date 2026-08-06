@@ -1,0 +1,43 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json,toml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+[*.{kt,kts}]
+max_line_length = 140
+
+# ktlint runs in CI (`./gradlew ktlintCheck`) and auto-fixes with `./gradlew ktlintFormat`.
+#
+# The `intellij_idea` code style is used deliberately rather than `ktlint_official`:
+# it matches what this codebase and IntelliJ's default Kotlin formatter already produce.
+# Adopting `ktlint_official` would mean a ~1500-change reformat with no behavioural
+# benefit, so the lint gate is set to catch real problems instead.
+ktlint_code_style = intellij_idea
+
+# Wildcard imports are used consistently for Ktor's DSL packages (io.ktor.server.routing.*
+# and friends), which is the idiom in Ktor's own documentation. Enforcing explicit
+# imports here would expand ~130 imports across the adapters for no readability gain.
+ktlint_standard_no-wildcard-imports = disabled
+
+# Trailing commas are not used in this codebase; the rule is purely cosmetic and would
+# touch nearly every multi-argument call site.
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+
+# CommandRunner.kt is named after its entry point `runCommand`, not after the
+# CommandResult data class it returns. The filename rule assumes class-per-file.
+ktlint_standard_filename = disabled
