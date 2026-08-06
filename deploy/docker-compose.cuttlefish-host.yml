@@ -1,0 +1,52 @@
+# Deploy this on a host with Cuttlefish Host/Cloud Orchestrator available.
+#
+# Prerequisites:
+#   - KVM enabled (/dev/kvm must exist)
+#   - Host/Cloud Orchestrator reachable from the adapter container
+#   - Host must have enough resources for Cuttlefish VMs (4GB RAM + 10GB disk per instance)
+#
+# Required env vars:
+#   ADAPTER_SECRET — shared secret between this adapter and the Manager
+#                    Generate with: openssl rand -hex 32
+#   CUTTLEFISH_ORCHESTRATOR_URL — full orchestrator base URL, for example https://host.docker.internal:2443
+#
+# Usage:
+#   ADAPTER_SECRET=<token> CUTTLEFISH_ORCHESTRATOR_URL=https://host.docker.internal:2443 docker compose -f docker-compose.cuttlefish-host.yml up -d
+#
+# Tip: manager uses the provider URL host from msh.yaml as the default adb host.
+# Tip: set `accessHost` in msh.yaml only if direct device access must use a different host.
+# Tip: keep port 6520 reachable only from trusted CI / Marathon runners.
+
+services:
+  shepherd-cuttlefish:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.shepherd-cuttlefish
+    image: ghcr.io/rus-artur4ik/shepherd-cuttlefish:0.1.0
+    container_name: shepherd-cuttlefish
+    privileged: true
+    devices:
+      - /dev/kvm
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - cuttlefish-home:/home/vsoc-01                  # persist adapter lease state
+    restart: unless-stopped
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_PORT: "6520"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+      CUTTLEFISH_ORCHESTRATOR_URL: "${CUTTLEFISH_ORCHESTRATOR_URL:?CUTTLEFISH_ORCHESTRATOR_URL must be set}"
+      CUTTLEFISH_ORCHESTRATOR_INSECURE_TLS: "${CUTTLEFISH_ORCHESTRATOR_INSECURE_TLS:-false}"
+      CUTTLEFISH_ORCHESTRATOR_LEASES_PATH: "/home/vsoc-01/msh-cuttlefish-leases.json"
+    ports:
+      - "7037:7037"
+      - "6520:6520"     # Cuttlefish adb port
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cuttlefish-home:

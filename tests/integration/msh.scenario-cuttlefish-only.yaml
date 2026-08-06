@@ -1,0 +1,7 @@
+# E2E scenario: only the cuttlefish provider is configured.
+# Used to verify that a session can be satisfied from the cuttlefish (cloud AVD) provider.
+providers:
+  - name: "integration-cuttlefish"
+    url: "http://shepherd-cuttlefish:7037"
+    accessHost: "shepherd-cuttlefish"
+    secret: "integration-secret-cuttlefish"

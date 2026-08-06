@@ -1,0 +1,23 @@
+providers:
+  # Physical device rack running shepherd-adb (module: adapter/shepherd-adb)
+  # secret must match ADAPTER_SECRET on that host
+  - name: "device-rack-1"
+    url: "http://192.168.50.100:7037"
+    # accessHost defaults to the host part of `url`
+    # accessHost: "192.168.50.100"
+    secret: "your-strong-random-secret-here"
+
+  # Emulator farm running shepherd-farm (module: adapter/shepherd-farm)
+  # - name: "emu-farm-1"
+  #   url: "http://192.168.50.110:7037"
+  #   # Optional only when direct ADB access lives on another host
+  #   # accessHost: "192.168.50.111"
+  #   secret: "another-strong-secret"
+
+  # Cuttlefish host running shepherd-cuttlefish (module: adapter/shepherd-cuttlefish)
+  # - name: "cuttlefish-1"
+  #   url: "http://192.168.50.120:7037"
+  #   secret: "third-strong-secret"
+
+  # Local development only: blank secret disables adapter auth.
+  # Do not use blank secrets in shared environments.

@@ -1,0 +1,17 @@
+# Normalise line endings so shell scripts stay executable on Windows checkouts.
+* text=auto eol=lf
+
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+*.jar  binary
+*.apk  binary
+*.png  binary
+*.jpg  binary
+*.gz   binary
+*.zip  binary
+
+# Keep generated/vendored files out of diffs and language statistics.
+gradle/wrapper/gradle-wrapper.jar binary linguist-vendored
+gradlew      linguist-vendored
+gradlew.bat  linguist-vendored

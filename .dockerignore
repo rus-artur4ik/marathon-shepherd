@@ -1,0 +1,23 @@
+# Keep the build context small: without this the daemon receives the whole repo,
+# including .git and any locally built sample APKs.
+.git/
+.gitignore
+.github/
+
+**/build/
+.gradle/
+.kotlin/
+
+tests/public_ui/apks/
+.msh-sandbox/
+.msh-runner-venv/
+.msh/
+
+**/__pycache__/
+**/*.log
+.DS_Store
+
+*.md
+!README.md
+LICENSE
+NOTICE

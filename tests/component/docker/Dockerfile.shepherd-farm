@@ -1,0 +1,27 @@
+# Shepherd Farm Adapter (test image).
+#
+# Ships the pre-built distribution from adapter/shepherd-farm/build/install/shepherd-farm.
+# Run ./gradlew :adapter:shepherd-farm:installDist first (handled by [build] all).
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY adapter/shepherd-farm/build/install/shepherd-farm /opt/shepherd-farm
+
+RUN if [ ! -x /opt/shepherd-farm/bin/shepherd-farm ]; then \
+      echo "ERROR: /opt/shepherd-farm/bin/shepherd-farm missing — run ./gradlew :adapter:shepherd-farm:installDist before docker build" >&2; \
+      exit 1; \
+    fi
+
+ENV ADAPTER_PORT=7037
+ENV FARM_SERVER_PORT=8080
+ENV ADAPTER_ADB_PORT=5037
+
+EXPOSE 7037
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:7037/health || exit 1
+
+ENTRYPOINT ["/opt/shepherd-farm/bin/shepherd-farm"]

@@ -1,0 +1,57 @@
+# ── IDE / editor ──────────────────────────────────────────────────────────────
+/.idea/
+*.iml
+.vscode/
+.fleet/
+*.swp
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Gradle / Kotlin build output ──────────────────────────────────────────────
+.gradle/
+build/
+.kotlin/
+local.properties
+/lib/
+
+# Compiled output. The Gradle wrapper jar is a deliberate exception: without it
+# `./gradlew` cannot bootstrap on a fresh clone.
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+
+# ── Runtime config: these hold live adapter bearer secrets ────────────────────
+# The manager reads (and PUT /api/v1/config rewrites) msh.yaml from its CWD, and
+# Docker Compose auto-loads .env — so both are one `git add .` away from a leak.
+# Tracked examples and test fixtures are re-included below.
+.env
+.env.*
+msh.yaml
+msh.*.yaml
+!deploy/msh.yaml.example
+!deploy/msh.cuttlefish-server.yaml
+!tests/**/msh.*.yaml
+!**/metadata.env
+
+# ── Test artifacts ────────────────────────────────────────────────────────────
+# Third-party sample APKs are fetched on demand by scripts/build_test_apk.sh,
+# never committed — they are ~58 MB of regenerable build output.
+tests/public_ui/apks/
+.msh/
+.msh-sandbox/
+.msh-runner-venv/
+
+# ── Agent / assistant scratch ─────────────────────────────────────────────────
+.claude/
+/AGENTS.md

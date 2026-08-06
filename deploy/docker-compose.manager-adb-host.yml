@@ -1,0 +1,95 @@
+# Marathon Shepherd — Manager + shepherd-adb using a host-level adb daemon.
+#
+# Required env vars:
+#   ADAPTER_SECRET  — shared secret between manager and adapter
+#   MSH_ACCESS_HOST — host/IP that Marathon or CI can use to reach adb proxy ports on this machine
+#
+# Host prerequisites:
+#   - adb is installed on the host
+#   - host adb server is reachable from Docker on tcp://host.docker.internal:5037
+#   - the published proxy port range below is reachable from Marathon / CI
+#
+# Example:
+#   ADAPTER_SECRET=$(openssl rand -hex 32) \
+#   MSH_ACCESS_HOST=192.168.50.254 \
+#   docker compose -f deploy/docker-compose.manager-adb-host.yml up -d
+
+name: marathon-shepherd
+
+networks:
+  shepherd:
+    driver: bridge
+
+volumes:
+  msh-manager-state:
+  shepherd-adb-state:
+
+services:
+  shepherd-adb:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.shepherd-adb
+    image: ghcr.io/rus-artur4ik/shepherd-adb:0.1.0
+    container_name: shepherd-adb
+    networks:
+      - shepherd
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_ADB_PORT: "5037"
+      ADB_PROXY_PORT_RANGE: "7600-7609"
+      ADB_LEASES_PATH: "/var/lib/msh/adb-leases.json"
+      ADB_SERVER_SOCKET: "tcp:host.docker.internal:5037"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+    volumes:
+      - shepherd-adb-state:/var/lib/msh
+    ports:
+      - "7600-7609:7600-7609"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7037/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.1.0
+    container_name: msh-manager
+    networks:
+      - shepherd
+    restart: unless-stopped
+    environment:
+      MSH_PORT: "6037"
+      MSH_CONFIG: "/etc/msh/msh.yaml"
+      MSH_DATA_DIR: "/var/lib/msh"
+      ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
+      MSH_ACCESS_HOST: "${MSH_ACCESS_HOST:?MSH_ACCESS_HOST must be set}"
+    volumes:
+      - msh-manager-state:/var/lib/msh
+    ports:
+      - "6037:6037"
+    depends_on:
+      shepherd-adb:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /etc/msh
+        cat > /etc/msh/msh.yaml <<EOF
+        providers:
+          - name: "device-rack-1"
+            url: "http://shepherd-adb:7037"
+            accessHost: "${MSH_ACCESS_HOST}"
+            secret: "${ADAPTER_SECRET}"
+        EOF
+        exec /opt/shepherd/bin/manager
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

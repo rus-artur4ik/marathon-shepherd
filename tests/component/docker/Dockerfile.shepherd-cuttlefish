@@ -1,0 +1,32 @@
+# Shepherd Cuttlefish Adapter (test image).
+#
+# Ships the pre-built distribution from adapter/shepherd-cuttlefish/build/install/shepherd-cuttlefish.
+# Run ./gradlew :adapter:shepherd-cuttlefish:installDist first (handled by [build] all).
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY adapter/shepherd-cuttlefish/build/install/shepherd-cuttlefish /opt/shepherd-cuttlefish
+
+RUN if [ ! -x /opt/shepherd-cuttlefish/bin/shepherd-cuttlefish ]; then \
+      echo "ERROR: /opt/shepherd-cuttlefish/bin/shepherd-cuttlefish missing — run ./gradlew :adapter:shepherd-cuttlefish:installDist before docker build" >&2; \
+      exit 1; \
+    fi
+
+# Direct Cloud Orchestrator access is configured through CUTTLEFISH_ORCHESTRATOR_URL.
+# Persist local lease state with CUTTLEFISH_ORCHESTRATOR_LEASES_PATH when possible.
+ENV ADAPTER_PORT=7037
+ENV ADAPTER_ADB_PORT=6520
+ENV CUTTLEFISH_ORCHESTRATOR_URL=https://127.0.0.1:2443
+# TLS validation stays ON in the published image. Override at run time
+# (-e CUTTLEFISH_ORCHESTRATOR_INSECURE_TLS=true) only for a self-signed dev host.
+ENV CUTTLEFISH_ORCHESTRATOR_INSECURE_TLS=false
+
+EXPOSE 7037
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:7037/health || exit 1
+
+ENTRYPOINT ["/opt/shepherd-cuttlefish/bin/shepherd-cuttlefish"]

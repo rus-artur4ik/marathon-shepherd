@@ -1,0 +1,7 @@
+# E2E scenario: only the farm provider is configured.
+# Used to verify that a session can be satisfied from a single emulator provider.
+providers:
+  - name: "integration-farm"
+    url: "http://shepherd-farm:7037"
+    accessHost: "farm-server"
+    secret: "integration-secret-farm"

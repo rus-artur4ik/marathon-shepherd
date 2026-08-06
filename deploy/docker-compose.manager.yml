@@ -1,0 +1,28 @@
+# Marathon Shepherd — Manager
+#
+# Defaults (no env vars needed for local use):
+#   ./msh.yaml   → /etc/msh/msh.yaml  (config)
+#   ./msh-data   → /var/lib/msh       (SQLite state)
+#
+# Set MSH_DATA_PATH to control where manager state is persisted on the host.
+#
+#   MSH_DATA_PATH=/opt/msh docker compose -f deploy/docker-compose.manager.yml up -d
+
+services:
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.1.0
+    container_name: msh-manager
+    restart: unless-stopped
+    volumes:
+      - "${MSH_CONFIG_PATH:-./msh.yaml}:/etc/msh/msh.yaml:ro"
+      - "${MSH_DATA_PATH:-./msh-data}:/var/lib/msh"
+    ports:
+      - "6037:6037"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
