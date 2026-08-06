@@ -1,0 +1,27 @@
+# Cloud Orchestrator
+#
+# Builds the official Cloud Orchestrator from source, following:
+#   git clone https://github.com/google/cloud-android-orchestration.git
+#   docker build -t cuttlefish-cloud-orchestrator .
+
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git
+
+ARG CLOUD_ANDROID_ORCHESTRATION_REF=main
+
+WORKDIR /src
+RUN git clone --depth 1 --branch "${CLOUD_ANDROID_ORCHESTRATION_REF}" \
+    https://github.com/google/cloud-android-orchestration.git .
+
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -o /app \
+    cmd/cloud_orchestrator/main.go
+
+FROM gcr.io/distroless/base
+
+COPY --from=builder /app /app
+COPY --from=builder /src/web/intercept /web/intercept
+
+CMD ["/app"]

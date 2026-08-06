@@ -1,0 +1,16 @@
+providers:
+  - name: "fake-rack-a"
+    url: "http://fake-rack-a:7037"
+    accessHost: "fake-rack-a"
+    secret: "scale-secret-rack-a"
+  - name: "fake-rack-b"
+    url: "http://fake-rack-b:7037"
+    accessHost: "fake-rack-b"
+    secret: "scale-secret-rack-b"
+  - name: "fake-rack-c"
+    url: "http://fake-rack-c:7037"
+    accessHost: "fake-rack-c"
+    secret: "scale-secret-rack-c"
+noDeviceStrategy:
+  mode: WAIT_WITH_TIMEOUT
+  waitTimeoutSeconds: 10

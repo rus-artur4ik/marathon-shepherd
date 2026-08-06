@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Ktor and Kotlin releases move as a set; separate PRs per artifact are noise.
+      ktor:
+        patterns: ['io.ktor:*']
+      kotlin:
+        patterns: ['org.jetbrains.kotlin*', 'org.jetbrains.kotlinx:*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Workflow actions are low-risk and move together; one PR per action is noise.
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directories:
+      - /deploy
+      - /tests/component/docker
+    schedule:
+      interval: weekly
+    ignore:
+      # The JVM is pinned to 21 on purpose: the Gradle toolchain, every runtime image and the
+      # docs agree. Moving to a new Java major is a deliberate change, not a routine bump.
+      - dependency-name: eclipse-temurin
+        update-types: ['version-update:semver-major']

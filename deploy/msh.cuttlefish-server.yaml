@@ -1,0 +1,6 @@
+providers:
+  - name: "cuttlefish-1"
+    url: "http://shepherd-cuttlefish:7037"
+    # Must be reachable by external Marathon / CI clients for direct adb access.
+    accessHost: "YOUR_SERVER_HOST_OR_IP"
+    secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"

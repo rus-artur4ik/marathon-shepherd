@@ -1,0 +1,123 @@
+# Docker Compose stack for scale / load testing.
+#
+# Brings up the real manager against multiple fake adapters that each present
+# a large pool of virtual devices. No real ADB, no real emulators — everything
+# happens in memory, so you can push 100+ devices per adapter on a laptop.
+#
+# Usage:
+#   ./tests/scale/run_scale.sh           # full profile: 3 fakes × 100 devices, k6 churn
+#   SCALE_MODE=smoke ./tests/scale/run_scale.sh  # shorter duration for CI
+
+services:
+  fake-rack-a:
+    image: python:3.12-alpine
+    container_name: msh-scale-fake-rack-a
+    command: ["python", "/opt/scale/fake_shepherd_adapter.py"]
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_SECRET: "scale-secret-rack-a"
+      ADAPTER_TYPE: "fake-rack-a"
+      FAKE_DEVICE_COUNT: "${FAKE_RACK_A_DEVICES:-100}"
+      FAKE_API_LEVELS: "${FAKE_RACK_A_APIS:-34}"
+      FAKE_DEVICE_TYPE: "physical"
+      FAKE_LATENCY_MS: "${FAKE_RACK_A_LATENCY_MS:-5}"
+      FAKE_ERROR_RATE: "${FAKE_RACK_A_ERROR_RATE:-0}"
+      FAKE_ADVERTISED_ADB_HOST: "fake-rack-a"
+    volumes:
+      - ".:/opt/scale:ro"
+    networks:
+      - msh-scale
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7037/health', timeout=2)"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 2s
+
+  fake-rack-b:
+    image: python:3.12-alpine
+    container_name: msh-scale-fake-rack-b
+    command: ["python", "/opt/scale/fake_shepherd_adapter.py"]
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_SECRET: "scale-secret-rack-b"
+      ADAPTER_TYPE: "fake-rack-b"
+      FAKE_DEVICE_COUNT: "${FAKE_RACK_B_DEVICES:-100}"
+      FAKE_API_LEVELS: "${FAKE_RACK_B_APIS:-34}"
+      FAKE_DEVICE_TYPE: "emulator"
+      FAKE_LATENCY_MS: "${FAKE_RACK_B_LATENCY_MS:-5}"
+      FAKE_ERROR_RATE: "${FAKE_RACK_B_ERROR_RATE:-0}"
+      FAKE_ADVERTISED_ADB_HOST: "fake-rack-b"
+    volumes:
+      - ".:/opt/scale:ro"
+    networks:
+      - msh-scale
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7037/health', timeout=2)"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 2s
+
+  fake-rack-c:
+    image: python:3.12-alpine
+    container_name: msh-scale-fake-rack-c
+    command: ["python", "/opt/scale/fake_shepherd_adapter.py"]
+    environment:
+      ADAPTER_PORT: "7037"
+      ADAPTER_SECRET: "scale-secret-rack-c"
+      ADAPTER_TYPE: "fake-rack-c"
+      FAKE_DEVICE_COUNT: "${FAKE_RACK_C_DEVICES:-50}"
+      FAKE_API_LEVELS: "${FAKE_RACK_C_APIS:-35}"
+      FAKE_DEVICE_TYPE: "emulator"
+      FAKE_LATENCY_MS: "${FAKE_RACK_C_LATENCY_MS:-5}"
+      FAKE_ERROR_RATE: "${FAKE_RACK_C_ERROR_RATE:-0}"
+      FAKE_ADVERTISED_ADB_HOST: "fake-rack-c"
+    volumes:
+      - ".:/opt/scale:ro"
+    networks:
+      - msh-scale
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7037/health', timeout=2)"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 2s
+
+  manager:
+    build:
+      context: ../..
+      dockerfile: tests/component/docker/Dockerfile
+    image: msh-manager-integration:latest
+    container_name: msh-scale-manager
+    depends_on:
+      fake-rack-a:
+        condition: service_healthy
+      fake-rack-b:
+        condition: service_healthy
+      fake-rack-c:
+        condition: service_healthy
+    environment:
+      MSH_PORT: "6037"
+      MSH_CONFIG: "/etc/msh/msh.scale.yaml"
+      MSH_DATA_DIR: "/var/lib/msh"
+    volumes:
+      - ".:/etc/msh:ro"
+      - msh-scale-data:/var/lib/msh
+    ports:
+      - "16037:6037"
+    networks:
+      - msh-scale
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6037/live"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 3s
+
+volumes:
+  msh-scale-data:
+
+networks:
+  msh-scale:
+    driver: bridge

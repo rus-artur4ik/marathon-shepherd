@@ -1,0 +1,27 @@
+# Keep the build context small: without this the daemon receives the whole repo,
+# including .git and any locally built sample APKs.
+.git/
+.gitignore
+.github/
+
+**/build/
+# ...except installDist output: the test-tier images (tests/component/docker/Dockerfile*)
+# package binaries the build:all stage has already produced, instead of compiling again.
+!adapter/*/build/install/
+!manager/*/build/install/
+.gradle/
+.kotlin/
+
+tests/public_ui/apks/
+.msh-sandbox/
+.msh-runner-venv/
+.msh/
+
+**/__pycache__/
+**/*.log
+.DS_Store
+
+*.md
+!README.md
+LICENSE
+NOTICE

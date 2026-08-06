@@ -1,0 +1,13 @@
+providers:
+  - name: "smoke-adb"
+    url: "http://shepherd-adb:7037"
+    accessHost: "adb"
+    secret: "smoke-secret-adb"
+  - name: "smoke-farm"
+    url: "http://shepherd-farm:7037"
+    accessHost: "farm-server"
+    secret: "smoke-secret-farm"
+  - name: "smoke-cuttlefish"
+    url: "http://shepherd-cuttlefish:7037"
+    accessHost: "shepherd-cuttlefish"
+    secret: "smoke-secret-cuttlefish"

@@ -1,0 +1,32 @@
+Marathon Shepherd
+Copyright 2026 Artur Garifullin
+
+This product includes software developed by Artur Garifullin.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------------
+TRADEMARK / AFFILIATION NOTICE
+--------------------------------------------------------------------------------
+
+"Marathon Shepherd" is an independent project. It is NOT affiliated with,
+endorsed by, or sponsored by Marathon Labs, the maintainers of the Marathon
+Android/iOS test runner (https://github.com/MarathonLabs/marathon), or Google
+LLC.
+
+The name "Marathon" appears in this project only to describe interoperability:
+Marathon Shepherd allocates devices for, and is consumed by, the Marathon test
+runner. "Marathon" and any associated marks remain the property of their
+respective owners. Likewise "Android", "Cuttlefish", and "Gradle" are
+trademarks of their respective owners and are used here descriptively.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+
+See THIRD-PARTY-NOTICES.md for the licenses of bundled and referenced
+third-party components.
