@@ -2,7 +2,7 @@
 #
 # Ships the pre-built distribution from adapter/shepherd-cuttlefish/build/install/shepherd-cuttlefish.
 # Run ./gradlew :adapter:shepherd-cuttlefish:installDist first (handled by [build] all).
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl python3 && \

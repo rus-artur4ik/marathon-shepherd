@@ -5,7 +5,7 @@
 # [build] all stage in tests/run_tests.py does this). Ships the already-built
 # distribution into an eclipse-temurin JRE runtime — no JDK layer, no gradle
 # dependency download inside the container.
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
