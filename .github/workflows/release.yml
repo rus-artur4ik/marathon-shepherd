@@ -31,7 +31,7 @@ jobs:
           - image: shepherd-cuttlefish
             dockerfile: deploy/Dockerfile.shepherd-cuttlefish
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # arm64 is emulated only for the runtime stage; the Gradle builder stage runs on the
       # native platform (FROM --platform=$BUILDPLATFORM), since bytecode is portable.
@@ -79,7 +79,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Release notes from CHANGELOG.md
         run: |
