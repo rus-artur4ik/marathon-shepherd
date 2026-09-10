@@ -4,7 +4,7 @@
 # ── Stage 1: Build ──────────────────────────────────────────────────────────────
 # The builder only produces JVM bytecode, so it always runs on the build host's
 # native platform; only the runtime stage below is built per target architecture.
-FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS builder
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk AS builder
 
 WORKDIR /build
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties* ./
@@ -15,7 +15,7 @@ COPY manager/ manager/
 RUN chmod +x gradlew && ./gradlew :adapter:shepherd-adb:installDist --no-daemon
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────────────
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl adb && \
