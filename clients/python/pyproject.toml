@@ -1,0 +1,28 @@
+[build-system]
+# 77 is the first setuptools release that reads the SPDX `license` string (PEP 639).
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marathon-shepherd"
+version = "0.2.0"
+description = "Client for the Marathon Shepherd manager API: lease Android test devices from CI jobs, scripts and tests."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+dependencies = []
+classifiers = [
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.entry-points.pytest11]
+marathon_shepherd = "marathon_shepherd.pytest_plugin"
+
+[tool.setuptools]
+packages = ["marathon_shepherd"]
+
+[tool.setuptools.package-data]
+marathon_shepherd = ["py.typed"]

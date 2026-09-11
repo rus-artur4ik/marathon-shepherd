@@ -204,6 +204,44 @@ def count_gradle_scenarios(project_root: Path, module_paths: Sequence[str]) -> S
     return tally
 
 
+# The summary Python's unittest prints last: "Ran 48 tests in 2.975s", then "OK",
+# "OK (skipped=2)" or "FAILED (failures=1, errors=2, skipped=1)".
+_UNITTEST_RAN_RE = re.compile(r"^Ran (\d+) tests? in ")
+_UNITTEST_OUTCOME_RE = re.compile(r"^(?:OK|FAILED)(?: \((.+)\))?$")
+
+
+def count_unittest_scenarios(log_file: Path | None) -> ScenarioTally:
+    """
+    Count passed / failed / skipped tests from the closing summary of a Python
+    unittest run. unittest prints no per-test marker the generic scan in
+    `count_stage_scenarios` recognizes, but its last lines carry the totals.
+    """
+    if log_file is None or not log_file.is_file():
+        return ScenarioTally()
+    ran = 0
+    outcome: dict[str, int] = {}
+    try:
+        with log_file.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                ran_match = _UNITTEST_RAN_RE.match(line)
+                if ran_match is not None:
+                    ran = int(ran_match.group(1))
+                    continue
+                outcome_match = _UNITTEST_OUTCOME_RE.match(line)
+                if outcome_match is not None:
+                    outcome = {}
+                    for item in (outcome_match.group(1) or "").split(","):
+                        key, _, value = item.partition("=")
+                        if value.strip().isdigit():
+                            outcome[key.strip()] = int(value)
+    except OSError:
+        return ScenarioTally()
+    failed = outcome.get("failures", 0) + outcome.get("errors", 0) + outcome.get("unexpected successes", 0)
+    skipped = outcome.get("skipped", 0)
+    return ScenarioTally(passed=max(0, ran - failed - skipped), failed=failed, skipped=skipped)
+
+
 def count_stage_progress(log_file: Path | None) -> int:
     """Count lines in *log_file* that match a known 'task completed' pattern."""
     if log_file is None or not log_file.is_file():

@@ -15,6 +15,7 @@ STAGE_IDS: dict[str, str] = {
     "build:docker-images":                "[build] docker images",
     "unit:kotlin":                        "[unit] kotlin",
     "unit:jenkins":                       "[unit] jenkins",
+    "unit:python-client":                 "[unit] python-client",
     "component-cli:local-services":       "[component:cli] local services",
     "component-docker:shepherd-adb":      "[component:docker] shepherd-adb",
     "component-docker:shepherd-farm":     "[component:docker] shepherd-farm",

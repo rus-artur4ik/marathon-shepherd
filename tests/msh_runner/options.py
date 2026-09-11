@@ -38,6 +38,7 @@ def usage() -> str:
 Test groups and subjects:
   [build]            installDist per service (compile artifacts, required by later stages)
   [unit]             Isolated JVM tests per service + Jenkins shared-library unit tests
+                     + Python client unit tests (stdlib only; no Docker, adb or Groovy)
   [component:cli]    All services run locally via CLI, tested over HTTP — Cloud Orchestrator runs in Docker
   [component:docker] Each service built and run in Docker isolation, tested over HTTP
   [integration]      Full Docker Compose stack, synthetic devices
@@ -48,9 +49,9 @@ Test groups and subjects:
 Stage ids (use with --only / --skip / stdin list):
   build:all                              unit:kotlin
   build:docker-images                    unit:jenkins
-  component-cli:local-services           scale:fake-adapter-churn
+  component-cli:local-services           unit:python-client
   component-docker:{shepherd-adb,shepherd-farm,shepherd-cuttlefish,manager}
-  integration:docker-compose
+  integration:docker-compose             scale:fake-adapter-churn
   e2e:docker-scenarios
   e2e:real-device-session
   e2e:apk-instrumentation

@@ -140,10 +140,13 @@ class ExecutionMixin:
         integration_env = os.environ.copy()
         integration_env["NO_COLOR"] = "1"
         integration_env["MSH_LOG_MODE"] = "plain"
-        # ── Parallel group: [unit] kotlin + [unit] jenkins + [build] docker images
-        # These three are mutually independent:
+        # ── Parallel group: [unit] kotlin + [unit] jenkins + [unit] python-client
+        #    + [build] docker images
+        # These are mutually independent:
         #   - kotlin uses Gradle workers (CPU-bound)
         #   - jenkins runs Groovy (separate JVM)
+        #   - python-client runs the stdlib unittest suite against a loopback stub
+        #     manager (no Docker, adb or Groovy; a few seconds)
         #   - docker images hits the daemon (I/O + network)
         # On a warm laptop this group finishes in max(gradle, groovy, docker)
         # time instead of their sum — typically 40–60% faster than sequential.
@@ -164,6 +167,13 @@ class ExecutionMixin:
                 "[unit] jenkins",
                 "Jenkins shared-library unit tests passed",
                 ["groovy", str(REPO_ROOT / "tests/unit/jenkins_unit_test.groovy")],
+                repo_env,
+            ),
+            (
+                "[unit] python-client",
+                "Python client unit tests passed",
+                # The documented command, verbatim: it runs from the repo root (cwd).
+                ["python3", "-m", "unittest", "discover", "-s", "clients/python/tests", "-t", "clients/python", "-v"],
                 repo_env,
             ),
         ]

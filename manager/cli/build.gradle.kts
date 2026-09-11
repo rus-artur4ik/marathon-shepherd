@@ -1,6 +1,5 @@
 plugins {
     kotlin("jvm")
-    kotlin("plugin.serialization")
     application
 }
 
@@ -10,16 +9,12 @@ application {
 }
 
 dependencies {
-    implementation(libs.kotlinx.serialization.json)
+    implementation(project(":manager:client"))
     implementation(libs.clikt)
+    // The HTTP client logs through SLF4J; a CLI has nowhere useful to send it.
+    runtimeOnly(libs.slf4j.nop)
 
-    implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.cio)
-    implementation(libs.ktor.client.content.negotiation)
-    implementation(libs.ktor.serialization.json)
-
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.kotlin.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
-
-tasks.test { useJUnitPlatform() }

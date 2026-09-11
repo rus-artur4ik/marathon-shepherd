@@ -75,10 +75,10 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 4 — Client layer
 
-- [ ] `manager/client`: Kotlin client library implementing the shared `ShepherdApi`
-- [ ] `mshctl` rebuilt on the client; new commands for the new API surface
-- [ ] `clients/python`: dependency-free Python client with a session context manager
-- [ ] "Connect your client" documentation
+- [x] `manager/client`: Kotlin client library implementing the shared `ShepherdApi`
+- [x] `mshctl` rebuilt on the client; new commands for the new API surface
+- [x] `clients/python`: dependency-free Python client with a session context manager
+- [x] "Connect your client" documentation (`docs/clients.md`)
 
 ## Phase 5 — MCP server
 

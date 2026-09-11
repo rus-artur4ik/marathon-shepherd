@@ -56,6 +56,7 @@ class PreflightMixin:
             "[build] docker images",
             "[unit] kotlin",
             "[unit] jenkins",
+            "[unit] python-client",
             "[component:cli] local services",
             "[component:docker] shepherd-adb",
             "[component:docker] shepherd-farm",

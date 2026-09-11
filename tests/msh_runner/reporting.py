@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .logs import ScenarioTally, count_gradle_scenarios, count_stage_scenarios, read_display_tail_lines, read_failure_details
+from .logs import (
+    ScenarioTally,
+    count_gradle_scenarios,
+    count_stage_scenarios,
+    count_unittest_scenarios,
+    read_display_tail_lines,
+    read_failure_details,
+)
 from .settings import FAILURE_LOG_TAIL_LINES, REPO_ROOT
 from .status import StatusEntry, format_elapsed
 
@@ -94,6 +101,10 @@ class ReportingMixin:
                     "adapter/shepherd-adb",
                     "adapter/shepherd-cuttlefish",
                 ])
+            elif entry.label == "[unit] python-client":
+                # unittest prints no markers the generic scan knows; its closing
+                # summary ("Ran N tests", "OK (skipped=1)") carries the counts.
+                tally = count_unittest_scenarios(log_file if log_file.exists() else None)
             elif entry.label == "[build] all":
                 # installDist emits no test scenarios.
                 tally = ScenarioTally()

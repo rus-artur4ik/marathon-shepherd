@@ -1,0 +1,4 @@
+# Build output of `pip install ./clients/python` and `python -m build`.
+*.egg-info/
+build/
+dist/
