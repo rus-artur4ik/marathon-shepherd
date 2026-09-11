@@ -30,6 +30,7 @@ class SessionRoutesTest {
         }
 
         val response = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":">=34","deviceType":"emulator","ttlSeconds":120}""")
         }
@@ -54,6 +55,7 @@ class SessionRoutesTest {
         }
 
         val createResponse = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"devices":1,"apiLevel":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
@@ -67,6 +69,7 @@ class SessionRoutesTest {
         requireNotNull(sessionId)
 
         val waitResponse = client.post("/api/v1/sessions/$sessionId/wait") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"timeoutSeconds":2}""")
         }
@@ -76,7 +79,7 @@ class SessionRoutesTest {
         assertContains(waitBody, "\"status\": \"READY\"")
         assertContains(waitBody, "\"allocatedDevices\": 1")
 
-        val releaseResponse = client.delete("/api/v1/sessions/$sessionId")
+        val releaseResponse = client.delete("/api/v1/sessions/$sessionId") { bearerAuth(TEST_ADMIN_TOKEN) }
         assertEquals(HttpStatusCode.OK, releaseResponse.status)
     }
 
@@ -92,6 +95,7 @@ class SessionRoutesTest {
         }
 
         val createResponse = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
@@ -99,6 +103,7 @@ class SessionRoutesTest {
         requireNotNull(sessionId)
 
         val waitResponse = client.post("/api/v1/sessions/$sessionId/wait") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"timeoutSeconds":1}""")
         }
@@ -117,12 +122,13 @@ class SessionRoutesTest {
             configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
-        val getResponse = client.get("/api/v1/sessions/sess_missing")
+        val getResponse = client.get("/api/v1/sessions/sess_missing") { bearerAuth(TEST_ADMIN_TOKEN) }
         val waitResponse = client.post("/api/v1/sessions/sess_missing/wait") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"timeoutSeconds":1}""")
         }
-        val deleteResponse = client.delete("/api/v1/sessions/sess_missing")
+        val deleteResponse = client.delete("/api/v1/sessions/sess_missing") { bearerAuth(TEST_ADMIN_TOKEN) }
 
         assertEquals(HttpStatusCode.NotFound, getResponse.status)
         assertEquals(HttpStatusCode.NotFound, waitResponse.status)
@@ -142,6 +148,7 @@ class SessionRoutesTest {
         }
 
         val readyResponse = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
@@ -150,14 +157,15 @@ class SessionRoutesTest {
 
         readyProvider.availableDevices = 0
         val pendingResponse = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
         val pendingSessionId = Regex("\"id\": \"([^\"]+)\"").find(pendingResponse.bodyAsText())?.groupValues?.get(1)
         requireNotNull(pendingSessionId)
 
-        val readyList = client.get("/api/v1/sessions?status=READY")
-        val pendingList = client.get("/api/v1/sessions?status=PENDING")
+        val readyList = client.get("/api/v1/sessions?status=READY") { bearerAuth(TEST_ADMIN_TOKEN) }
+        val pendingList = client.get("/api/v1/sessions?status=PENDING") { bearerAuth(TEST_ADMIN_TOKEN) }
 
         assertEquals(HttpStatusCode.OK, readyList.status)
         assertContains(readyList.bodyAsText(), readySessionId)

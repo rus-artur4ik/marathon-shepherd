@@ -283,16 +283,28 @@ emit_failure_cause() {
     MSH_FAILURE_RECORDED="true"
 }
 
+# The manager authenticates every /api/v1 call. Managers started by the harness get
+# MSH_ADMIN_TOKEN=${MSH_TEST_ADMIN_TOKEN}; point MSH_TOKEN at another key to test an
+# external manager.
+MSH_TEST_ADMIN_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
+export MSH_TEST_ADMIN_TOKEN
+export MSH_TOKEN="${MSH_TOKEN:-${MSH_TEST_ADMIN_TOKEN}}"
+
 http_json() {
     local method="$1"
     local url="$2"
     local payload="${3:-}"
     local tmp_file
     tmp_file="$(mktemp)"
+    # Only manager API calls carry the key; adapter endpoints use their own secret.
+    local -a auth_args=()
+    if [[ "$url" == */api/v1/* ]]; then
+        auth_args=(-H "Authorization: Bearer ${MSH_TOKEN}")
+    fi
     if [[ -n "$payload" ]]; then
-        HTTP_STATUS="$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" -H "Content-Type: application/json" --data-binary "$payload" "$url")"
+        HTTP_STATUS="$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" ${auth_args[@]+"${auth_args[@]}"} -H "Content-Type: application/json" --data-binary "$payload" "$url")"
     else
-        HTTP_STATUS="$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" "$url")"
+        HTTP_STATUS="$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" ${auth_args[@]+"${auth_args[@]}"} "$url")"
     fi
     HTTP_BODY="$(cat "$tmp_file")"
     rm -f "$tmp_file"

@@ -292,10 +292,13 @@ fi
 
 stage_begin_phase "starting" "Starting manager process on port ${MANAGER_PORT}" 3 3
 MSH_PORT="${MANAGER_PORT}" \
+MSH_ADMIN_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}" \
 MSH_CONFIG="${CONFIG_FILE}" \
 MSH_DATA_DIR="${STATE_DIR}" \
 "${MANAGER_BIN}" > "${TMP_ROOT}/manager.log" 2>&1 &
 MANAGER_PID="$!"
+# The CLI and http_json talk to this manager with its admin key.
+export MSH_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
 
 if ! wait_for_http_json "${MANAGER_URL}/health" 60; then
     cat "${TMP_ROOT}/manager.log" || true

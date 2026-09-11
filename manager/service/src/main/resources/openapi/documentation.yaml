@@ -10,13 +10,17 @@ info:
     Release it when done; sessions past their TTL are reclaimed automatically, so a crashed
     client cannot strand a device.
 
-    The probes (`/live`, `/ready`, `/health`), `/metrics` and this document are
-    unauthenticated. Keep the manager port on a trusted network.
+    Every `/api/v1` call authenticates with an API key: `Authorization: Bearer <key>`.
+    Keys belong to named clients with a role (`admin`, `user`, `viewer`, `provider`) and
+    optional quotas. The probes (`/live`, `/ready`, `/health`), `/metrics` and this
+    document stay public; keep the manager port on a trusted network.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
 servers:
   - url: /
+security:
+  - bearerAuth: []
 tags:
   - name: sessions
     description: Request devices, wait for them and give them back.
@@ -24,6 +28,8 @@ tags:
     description: What the fleet holds right now.
   - name: config
     description: Provider configuration (`msh.yaml`).
+  - name: access
+    description: API clients, keys, quotas and the audit log.
   - name: operations
     description: Probes, metrics and this document.
 paths:
@@ -31,6 +37,7 @@ paths:
     get:
       tags: [operations]
       operationId: getLiveness
+      security: []
       summary: Process liveness
       description: Answers as long as the process runs. Never touches a dependency.
       responses:
@@ -44,6 +51,7 @@ paths:
     get:
       tags: [operations]
       operationId: getReadiness
+      security: []
       summary: Readiness to serve the API
       description: Checks the state database. Use it for load-balancer and Kubernetes readiness probes.
       responses:
@@ -63,6 +71,7 @@ paths:
     get:
       tags: [operations]
       operationId: getHealth
+      security: []
       summary: Fleet health
       description: |
         Provider health, pool sizes and session counts from the background snapshot, which
@@ -85,6 +94,7 @@ paths:
     get:
       tags: [operations]
       operationId: getMetrics
+      security: []
       summary: Prometheus metrics
       responses:
         "200":
@@ -97,6 +107,7 @@ paths:
     get:
       tags: [operations]
       operationId: getOpenApiDocument
+      security: []
       summary: This document
       description: Swagger UI for it is served at `/docs`.
       responses:
@@ -112,12 +123,21 @@ paths:
       operationId: listSessions
       summary: List sessions
       parameters:
+        - name: owner
+          in: query
+          description: "`me` for the caller's own sessions, or a client name."
+          schema:
+            type: string
         - name: status
           in: query
           description: Only sessions in this status. Without it, PENDING, READY and FAILED sessions are listed.
           schema:
             $ref: "#/components/schemas/SessionStatus"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: Matching sessions.
           content:
@@ -142,6 +162,10 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateSessionRequest"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "201":
           description: The session was created.
           content:
@@ -150,6 +174,8 @@ paths:
                 $ref: "#/components/schemas/Session"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Unavailable"
   /api/v1/sessions/{id}:
@@ -160,6 +186,10 @@ paths:
       operationId: getSession
       summary: Get a session
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The session.
           content:
@@ -174,6 +204,10 @@ paths:
       summary: Release a session
       description: Returns every lease to its provider. Releasing an already released session succeeds.
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The session was released.
           content:
@@ -200,6 +234,10 @@ paths:
             schema:
               $ref: "#/components/schemas/WaitSessionRequest"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The session after the wait; still `PENDING` if the timeout elapsed first.
           content:
@@ -221,6 +259,10 @@ paths:
             type: boolean
             default: false
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: Every active provider with its pool, inventory and access descriptors.
           content:
@@ -234,6 +276,10 @@ paths:
       summary: Active configuration
       description: Adapter secrets are replaced with `<redacted>`.
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The active configuration.
           content:
@@ -254,6 +300,10 @@ paths:
             schema:
               $ref: "#/components/schemas/ShepherdConfig"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The configuration now in effect.
           content:
@@ -270,14 +320,238 @@ paths:
       operationId: reloadConfig
       summary: Re-read msh.yaml from disk
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: The configuration now in effect.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ShepherdConfig"
+  /api/v1/me:
+    get:
+      tags: [access]
+      operationId: whoAmI
+      summary: The calling client
+      description: Name, role, quota in force and current usage of the key that made the call.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoAmI"
+  /api/v1/audit:
+    get:
+      tags: [access]
+      operationId: listAuditEntries
+      summary: Audit log
+      description: Newest first. Admins see every entry; other roles see only their own.
+      parameters:
+        - name: action
+          in: query
+          description: Action prefix, e.g. `session.` or `client.revoke`.
+          schema:
+            type: string
+        - name: actor
+          in: query
+          description: Client name (admins only).
+          schema:
+            type: string
+        - name: target
+          in: query
+          description: Exact target, e.g. a session id or client name.
+          schema:
+            type: string
+        - name: before
+          in: query
+          description: Only entries older than this id; pass `nextBefore` from the previous page.
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+  /api/v1/admin/clients:
+    get:
+      tags: [access]
+      operationId: listClients
+      summary: List API clients
+      parameters:
+        - name: includeRevoked
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: Clients, without their keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+    post:
+      tags: [access]
+      operationId: createClient
+      summary: Create an API client
+      description: The response carries the new key. It is shown exactly once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "201":
+          description: The client and its key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientKeyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/admin/clients/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientId"
+    get:
+      tags: [access]
+      operationId: getClient
+      summary: Get an API client
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [access]
+      operationId: updateClient
+      summary: Change a client's role, description or quota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClientRequest"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The updated client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [access]
+      operationId: revokeClient
+      summary: Revoke a client's key
+      description: |
+        The key stops working immediately. The client's sessions keep running unless
+        `releaseSessions=true`. The last active admin cannot be revoked unless
+        `MSH_ADMIN_TOKEN` is configured.
+      parameters:
+        - name: releaseSessions
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The revoked client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/admin/clients/{id}/rotate:
+    parameters:
+      - $ref: "#/components/parameters/ClientId"
+    post:
+      tags: [access]
+      operationId: rotateClientKey
+      summary: Replace a client's key
+      description: The old key stops working immediately; the new one is shown exactly once.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The client and its new key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientKeyResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "An API key: `Authorization: Bearer msh_...`."
   parameters:
+    ClientId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: cli_0123456789ab
     SessionId:
       name: id
       in: path
@@ -286,6 +560,28 @@ components:
         type: string
       example: sess_a1b2c3d4
   responses:
+    Unauthorized:
+      description: No API key, or an unknown or revoked one.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: The key's role does not allow this operation, or the session belongs to someone else.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: The client's device quota is exhausted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: The request is malformed or fails validation.
       content:
@@ -404,6 +700,9 @@ components:
         expiresAt:
           type: string
           format: date-time
+        owner:
+          type: string
+          description: Name of the client that created the session.
     PoolStatus:
       type: object
       required: [available, busy, total]
@@ -695,3 +994,162 @@ components:
           $ref: "#/components/schemas/MonitoringConfig"
         adapterTimeouts:
           $ref: "#/components/schemas/AdapterTimeoutsConfig"
+        quotas:
+          $ref: "#/components/schemas/QuotasConfig"
+        audit:
+          $ref: "#/components/schemas/AuditConfig"
+    QuotasConfig:
+      type: object
+      properties:
+        defaults:
+          $ref: "#/components/schemas/Quota"
+    AuditConfig:
+      type: object
+      properties:
+        retentionDays:
+          type: integer
+          format: int64
+          default: 90
+    Quota:
+      type: object
+      description: Client limits; an absent or null field is not limited.
+      properties:
+        maxDevices:
+          type: [integer, "null"]
+          minimum: 1
+          description: Devices the client may hold or wait for at once.
+        maxSessionLifetimeSeconds:
+          type: [integer, "null"]
+          format: int64
+          minimum: 1
+          description: Upper bound for a session's life; longer TTLs are shortened.
+        maxPriority:
+          type: [integer, "null"]
+          minimum: 0
+    Role:
+      type: string
+      enum: [admin, user, viewer, provider]
+    Client:
+      type: object
+      required: [id, name, role, keyPrefix, active, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        keyPrefix:
+          type: string
+          description: First characters of the key; the key itself is shown only once.
+        description:
+          type: string
+        quota:
+          $ref: "#/components/schemas/Quota"
+        effectiveQuota:
+          $ref: "#/components/schemas/Quota"
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        lastUsedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    CreateClientRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        role:
+          $ref: "#/components/schemas/Role"
+        description:
+          type: string
+        quota:
+          $ref: "#/components/schemas/Quota"
+    UpdateClientRequest:
+      type: object
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        description:
+          type: string
+        quota:
+          $ref: "#/components/schemas/Quota"
+    ClientKeyResponse:
+      type: object
+      required: [client, apiKey]
+      properties:
+        client:
+          $ref: "#/components/schemas/Client"
+        apiKey:
+          type: string
+          description: Shown exactly once.
+    Usage:
+      type: object
+      required: [activeSessions, devices]
+      properties:
+        activeSessions:
+          type: integer
+        devices:
+          type: integer
+    WhoAmI:
+      type: object
+      required: [id, name, role, quota, usage]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        quota:
+          $ref: "#/components/schemas/Quota"
+        usage:
+          $ref: "#/components/schemas/Usage"
+    AuditEntry:
+      type: object
+      required: [id, at, actor, action, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        actorId:
+          type: string
+        action:
+          type: string
+          examples: [session.create]
+        target:
+          type: string
+        outcome:
+          type: string
+          enum: [success, denied, failed]
+        details:
+          type: object
+          additionalProperties:
+            type: string
+        origin:
+          type: string
+    AuditPage:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        nextBefore:
+          type: integer
+          format: int64

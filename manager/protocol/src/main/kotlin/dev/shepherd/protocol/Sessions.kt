@@ -49,5 +49,7 @@ data class SessionResponse(
     val adbServers: List<AdbServer>,
     val queuePosition: Int? = null,
     val createdAt: String,
-    val expiresAt: String
+    val expiresAt: String,
+    /** Name of the client that created the session. */
+    val owner: String? = null
 )

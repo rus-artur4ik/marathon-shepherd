@@ -32,7 +32,7 @@ class ConfigRoutesTest {
             configureServer(managerServices(providerRegistry, stateStore))
         }
 
-        val response = client.get("/api/v1/config")
+        val response = client.get("/api/v1/config") { bearerAuth(TEST_ADMIN_TOKEN) }
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertContains(response.bodyAsText(), "\"name\": \"rack-1\"")
@@ -56,7 +56,7 @@ class ConfigRoutesTest {
             configureServer(managerServices(providerRegistry, stateStore))
         }
 
-        val body = client.get("/api/v1/config").bodyAsText()
+        val body = client.get("/api/v1/config") { bearerAuth(TEST_ADMIN_TOKEN) }.bodyAsText()
 
         assertFalse(body.contains("super-secret-token"), "adapter secret leaked over the API: $body")
         assertContains(body, REDACTED_SECRET)
@@ -83,6 +83,7 @@ class ConfigRoutesTest {
         // A read-modify-write cycle sends the placeholder straight back; it must not be
         // persisted as the literal new secret.
         val response = client.put("/api/v1/config") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -108,6 +109,7 @@ class ConfigRoutesTest {
         }
 
         val response = client.put("/api/v1/config") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -134,11 +136,13 @@ class ConfigRoutesTest {
         }
 
         client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
 
         val response = client.put("/api/v1/config") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"providers":[{"name":"farm-1","url":"http://127.0.0.1:7037"}]}""")
         }
@@ -178,8 +182,8 @@ class ConfigRoutesTest {
             """.trimIndent()
         )
 
-        val reloadResponse = client.post("/api/v1/config/reload")
-        val getResponse = client.get("/api/v1/config")
+        val reloadResponse = client.post("/api/v1/config/reload") { bearerAuth(TEST_ADMIN_TOKEN) }
+        val getResponse = client.get("/api/v1/config") { bearerAuth(TEST_ADMIN_TOKEN) }
 
         assertEquals(HttpStatusCode.OK, reloadResponse.status)
         assertContains(reloadResponse.bodyAsText(), "\"name\": \"farm-1\"")

@@ -101,6 +101,8 @@ services:
       MSH_PORT: "6037"
       MSH_CONFIG: "/etc/msh/msh.scale.yaml"
       MSH_DATA_DIR: "/var/lib/msh"
+      # Known admin key for the harness; see tests/helpers/common.sh.
+      MSH_ADMIN_TOKEN: "${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
     volumes:
       - ".:/etc/msh:ro"
       - msh-scale-data:/var/lib/msh

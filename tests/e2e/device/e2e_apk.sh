@@ -269,10 +269,13 @@ log_success "shepherd-adb healthy at ${ADB_ADAPTER_URL}"
 
 stage_begin_phase "starting" "Starting manager" 2 2
 MSH_PORT="${MANAGER_PORT}" \
+MSH_ADMIN_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}" \
 MSH_CONFIG="${TMP_ROOT}/msh.yaml" \
 MSH_DATA_DIR="${STATE_DIR}" \
 "${MANAGER_BIN}" > "${TMP_ROOT}/manager.log" 2>&1 &
 MANAGER_PID="$!"
+# The CLI and http_json talk to this manager with its admin key.
+export MSH_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
 
 if ! wait_for_http_json "${MANAGER_URL}/health" 60; then
     cat "${TMP_ROOT}/manager.log" || true

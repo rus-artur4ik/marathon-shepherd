@@ -13,6 +13,7 @@ import java.time.Duration
 fun Route.deviceRoutes(fleetMonitor: FleetMonitor, snapshotMaxAge: () -> Duration) {
     route("/api/v1/devices") {
         get {
+            call.actor().requireRole(*READER_ROLES)
             // The background snapshot answers by default; `?refresh=true` polls every adapter now.
             val refresh: Boolean = call.request.queryParameters["refresh"].toBoolean()
             val snapshot: FleetSnapshot = if (refresh) fleetMonitor.refresh() else fleetMonitor.snapshot(snapshotMaxAge())

@@ -55,7 +55,7 @@ class DeviceRoutesTest {
             configureServer(managerServices(providerRegistry, stateStore))
         }
 
-        val response = client.get("/api/v1/devices")
+        val response = client.get("/api/v1/devices") { bearerAuth(TEST_ADMIN_TOKEN) }
 
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()

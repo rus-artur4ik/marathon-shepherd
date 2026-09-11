@@ -325,6 +325,34 @@ check("preflight error message includes all 4 boot signal values") {
     assert script.contains("init.svc.bootanim="), "Error message missing init.svc.bootanim"
 }
 
+check("manager calls send the API key from the environment, never inline") {
+    MockSh sh = happySh()
+    load(sh).call([maxDevices: 1])
+    Map createCall = sh.lastCallWithLabel("Shepherd / Queue Session")
+    assert createCall != null
+    String script = createCall.script as String
+    assert script.contains('Authorization: Bearer ${MSH_TOKEN}'), "curl does not send MSH_TOKEN"
+    assert script.contains('auth_args[@]'), "the auth header is not passed to curl"
+}
+
+check("credentialsId binds the key as MSH_TOKEN for the whole run") {
+    MockSh sh = happySh()
+    List<Object> credentials = []
+    int bodies = 0
+    def script = load(sh)
+    script.binding.setVariable("string", { Map args -> args })
+    script.binding.setVariable("withCredentials", { List requested, Closure body ->
+        credentials.addAll(requested)
+        bodies++
+        body()
+    })
+    script.call([maxDevices: 1, credentialsId: "msh-api-key"])
+    assert credentials == [[credentialsId: "msh-api-key", variable: "MSH_TOKEN"]]
+    assert bodies == 1
+    assert sh.anyScriptContains("/api/v1/sessions")
+    assert sh.anyScriptContains("DELETE"), "session must still be released inside the credentials scope"
+}
+
 System.out.println()
 System.out.println("=".multiply(68))
 if (failed == 0) {

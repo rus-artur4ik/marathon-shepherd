@@ -1,69 +1,85 @@
 package dev.shepherd.api
 
+import dev.shepherd.ApiJson
 import dev.shepherd.api.dto.toResponse
 import dev.shepherd.domain.SessionManager
+import dev.shepherd.domain.auth.Actor
+import dev.shepherd.domain.errors.ResourceNotFoundException
+import dev.shepherd.domain.model.Session
 import dev.shepherd.protocol.CreateSessionRequest
+import dev.shepherd.protocol.StatusResponse
 import dev.shepherd.protocol.WaitSessionRequest
-import io.ktor.http.*
-import io.ktor.server.application.*
-import io.ktor.server.request.*
-import io.ktor.server.response.*
-import io.ktor.server.routing.*
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.receive
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 
 fun Route.sessionRoutes(sessionManager: SessionManager) {
     route("/api/v1/sessions") {
         post {
+            val actor: Actor = call.actor().requireRole(*HOLDER_ROLES)
             val request = call.receive<CreateSessionRequest>()
 
             val session = sessionManager.createSession(
                 requestedDevices = request.resolvedMaxDevices(),
                 api = request.resolvedApi(),
                 ttlSeconds = request.ttlSeconds,
-                deviceType = request.deviceType
+                deviceType = request.deviceType,
+                actor = actor
             )
             val queuePosition = sessionManager.getQueuePosition(session.id)
             call.respond(HttpStatusCode.Created, session.toResponse(queuePosition = queuePosition))
         }
 
         get {
+            val actor: Actor = call.actor().requireRole(*READER_ROLES)
             val statusFilter = call.request.queryParameters["status"]
-            val sessions = sessionManager.listSessions(statusFilter)
+            // `owner=me` selects the caller's own sessions; any other value matches owner names.
+            val owner: String? = call.request.queryParameters["owner"]?.trim()?.takeIf { value -> value.isNotEmpty() }
+            val sessions: List<Session> = if (owner == OWNER_ME) {
+                sessionManager.listSessions(statusFilter, ownerId = actor.id)
+            } else {
+                sessionManager.listSessions(statusFilter).filter { session -> owner == null || session.ownerName == owner }
+            }
             call.respond(sessions.map { it.toResponse() })
         }
 
         get("/{id}") {
-            val id = call.parameters["id"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing session id"))
-
-            val session = sessionManager.getSession(id)
-                ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
+            call.actor().requireRole(*READER_ROLES)
+            val session = sessionManager.getSession(call.pathParameter("id"))
+                ?: throw ResourceNotFoundException("Session not found")
 
             val queuePosition = sessionManager.getQueuePosition(session.id)
             call.respond(session.toResponse(queuePosition = queuePosition))
         }
 
         post("/{id}/wait") {
-            val id = call.parameters["id"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing session id"))
+            val actor: Actor = call.actor().requireRole(*HOLDER_ROLES)
+            val id: String = call.pathParameter("id")
             if (sessionManager.getSession(id) == null) {
-                return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
+                throw ResourceNotFoundException("Session not found")
             }
-            val request = call.receive<WaitSessionRequest>()
-            val session = sessionManager.waitForSession(id, request.timeoutSeconds)
+            // The body is optional; an empty one waits for the default timeout.
+            val body: String = call.receiveText()
+            val request: WaitSessionRequest = if (body.isBlank()) WaitSessionRequest() else ApiJson.decodeFromString(body)
+            val session = sessionManager.waitForSession(id, request.timeoutSeconds, actor)
             val queuePosition = sessionManager.getQueuePosition(session.id)
             call.respond(session.toResponse(queuePosition = queuePosition))
         }
 
         delete("/{id}") {
-            val id = call.parameters["id"]
-                ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing session id"))
-
-            val released = sessionManager.releaseSession(id)
-            if (released) {
-                call.respond(HttpStatusCode.OK, mapOf("status" to "released"))
-            } else {
-                call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
+            val actor: Actor = call.actor().requireRole(*HOLDER_ROLES)
+            if (!sessionManager.releaseSession(call.pathParameter("id"), actor)) {
+                throw ResourceNotFoundException("Session not found")
             }
+            call.respond(HttpStatusCode.OK, StatusResponse(status = "released"))
         }
     }
 }
+
+private const val OWNER_ME: String = "me"

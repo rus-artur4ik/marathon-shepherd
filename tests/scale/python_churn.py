@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import statistics
 import threading
 import time
@@ -68,6 +69,9 @@ def _http_json(method: str, url: str, body: dict | None, timeout: float = 10.0) 
     request = urllib.request.Request(url=url, data=data, method=method)
     if data is not None:
         request.add_header("Content-Type", "application/json")
+    token = os.environ.get("MSH_TOKEN", "").strip()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload_bytes = response.read()

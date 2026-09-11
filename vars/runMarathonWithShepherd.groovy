@@ -9,6 +9,21 @@ import groovy.transform.Field
 @Field final Set<String> SUPPORTED_DEVICE_TYPES = ['physical', 'emulator'] as Set<String>
 
 def call(Map params = [:]) {
+    // The manager authenticates every API call. With credentialsId the key comes from a
+    // Jenkins "Secret text" credential; otherwise an MSH_TOKEN already in the environment
+    // (for example from an enclosing withCredentials block) is used.
+    String credentialsId = normalizeOptionalText(params.credentialsId)
+    if (credentialsId == null) {
+        return runWithShepherd(params)
+    }
+    def result = null
+    withCredentials([string(credentialsId: credentialsId, variable: 'MSH_TOKEN')]) {
+        result = runWithShepherd(params)
+    }
+    return result
+}
+
+private def runWithShepherd(Map params) {
     String managerUrl = normalizeManagerUrl(params.managerUrl ?: env.MSH_URL ?: 'http://localhost:6037')
     int maxDevices = ((params.containsKey('maxDevices') ? params.maxDevices : 1) ?: 0) as int
     String apiSelector = normalizeOptionalText(params.api)
@@ -459,7 +474,13 @@ cleanup() {
 }
 trap cleanup EXIT
 ${requestFileBlock}
-status_code=\$(curl -sS -X ${quoteShellArg(method)} ${requestFlags} -o "\$response_file" -w '%{http_code}' ${quoteShellArg(url)})
+# The API key is read from the environment here, so it never appears in the script text or
+# the build log.
+auth_args=()
+if [[ -n "\${MSH_TOKEN:-}" ]]; then
+  auth_args=(-H "Authorization: Bearer \${MSH_TOKEN}")
+fi
+status_code=\$(curl -sS -X ${quoteShellArg(method)} \${auth_args[@]+"\${auth_args[@]}"} ${requestFlags} -o "\$response_file" -w '%{http_code}' ${quoteShellArg(url)})
 cat "\$response_file"
 printf '\\n%s' "\$status_code"
 """

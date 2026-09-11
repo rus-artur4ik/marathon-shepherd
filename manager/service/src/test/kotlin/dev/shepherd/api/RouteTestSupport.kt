@@ -4,11 +4,18 @@ import dev.shepherd.ManagerServices
 import dev.shepherd.adapter.api.*
 import dev.shepherd.domain.FleetMonitor
 import dev.shepherd.domain.SessionManager
+import dev.shepherd.domain.auth.Actor
+import dev.shepherd.domain.auth.ClientQuota
+import dev.shepherd.domain.auth.Role
 import dev.shepherd.domain.model.AdbServer
 import dev.shepherd.domain.provider.AcquireResult
 import dev.shepherd.domain.provider.DevicePoolStatus
 import dev.shepherd.domain.provider.DeviceProvider
 import dev.shepherd.domain.provider.ProviderRegistry
+import dev.shepherd.infra.audit.AuditStore
+import dev.shepherd.infra.audit.StoreAuditTrail
+import dev.shepherd.infra.auth.AccessControl
+import dev.shepherd.infra.auth.ClientStore
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
 import dev.shepherd.infra.state.StateStore
@@ -109,20 +116,39 @@ internal class RouteTestProvider(
     override suspend fun isHealthy(): Boolean = healthy
 }
 
+/** Static admin token every route test authenticates with. */
+internal const val TEST_ADMIN_TOKEN: String = "test-admin-token"
+
 /** Wires the HTTP layer the way `main` does, minus the background jobs. */
 internal fun managerServices(
     providerRegistry: ProviderRegistry,
     stateStore: StateStore,
-    sessionManager: SessionManager = SessionManager(providerRegistry, stateStore),
+    sessionManager: SessionManager? = null,
     metrics: MicrometerManagerMetrics = MicrometerManagerMetrics()
-): ManagerServices = ManagerServices(
-    providerRegistry = providerRegistry,
-    stateStore = stateStore,
-    sessionManager = sessionManager,
-    fleetMonitor = FleetMonitor(
-        providerCatalog = providerRegistry,
-        sessionCounts = { stateStore.countActiveSessions() },
+): ManagerServices {
+    val auditStore = AuditStore(stateStore.db)
+    val audit = StoreAuditTrail(auditStore)
+    return ManagerServices(
+        providerRegistry = providerRegistry,
+        stateStore = stateStore,
+        sessionManager = sessionManager ?: SessionManager(providerRegistry, stateStore, audit = audit),
+        fleetMonitor = FleetMonitor(
+            providerCatalog = providerRegistry,
+            sessionCounts = { stateStore.countActiveSessions() },
+            metrics = metrics
+        ),
+        accessControl = AccessControl(
+            clients = ClientStore(stateStore.db),
+            audit = audit,
+            quotaDefaults = { providerRegistry.currentConfig().quotas.defaults.toQuota() },
+            staticAdminToken = TEST_ADMIN_TOKEN
+        ),
+        auditStore = auditStore,
+        audit = audit,
         metrics = metrics
-    ),
-    metrics = metrics
-)
+    )
+}
+
+/** Creates a client straight through [AccessControl] and returns its API key. */
+internal suspend fun ManagerServices.issueKey(name: String, role: Role = Role.USER, quota: ClientQuota = ClientQuota.UNLIMITED): String =
+    accessControl.createClient(Actor.SYSTEM, name, role, description = null, quota = quota).apiKey

@@ -1,12 +1,15 @@
 package dev.shepherd.api
 
 import dev.shepherd.domain.SessionManager
+import dev.shepherd.domain.audit.AuditActions
+import dev.shepherd.domain.audit.AuditTrail
+import dev.shepherd.domain.auth.Role
+import dev.shepherd.domain.errors.ConflictException
 import dev.shepherd.domain.model.ShepherdConfig
 import dev.shepherd.domain.model.redactSecrets
 import dev.shepherd.domain.model.restoreRedactedSecrets
 import dev.shepherd.domain.provider.ProviderRegistry
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -15,13 +18,16 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 
-fun Route.configRoutes(providerRegistry: ProviderRegistry, sessionManager: SessionManager) {
+/** Provider configuration. Admin only: it names every adapter the manager can reach. */
+fun Route.configRoutes(providerRegistry: ProviderRegistry, sessionManager: SessionManager, audit: AuditTrail) {
     route("/api/v1/config") {
         get {
+            call.actor().requireRole(Role.ADMIN)
             call.respond(providerRegistry.currentConfig().redactSecrets())
         }
 
         put {
+            val actor = call.actor().requireRole(Role.ADMIN)
             val currentConfig = providerRegistry.currentConfig()
             // Adapter secrets are redacted on the way out, so a client that read the
             // config, edited it and sent it back must not have those placeholders
@@ -36,21 +42,21 @@ fun Route.configRoutes(providerRegistry: ProviderRegistry, sessionManager: Sessi
                 sessionManager.hasActiveSessionsForProvider(providerName)
             }
             if (blockedProviders.isNotEmpty()) {
-                call.respond(
-                    HttpStatusCode.Conflict,
-                    mapOf(
-                        "error" to "Cannot remove providers with active sessions: " +
-                            blockedProviders.joinToString(", ")
-                    )
-                )
-                return@put
+                throw ConflictException("Cannot remove providers with active sessions: " + blockedProviders.joinToString(", "))
             }
 
-            call.respond(HttpStatusCode.OK, providerRegistry.updateConfig(newConfig).redactSecrets())
+            val applied = providerRegistry.updateConfig(newConfig)
+            audit.record(actor, AuditActions.CONFIG_UPDATE, details = mapOf("providers" to providerNames(applied)))
+            call.respond(HttpStatusCode.OK, applied.redactSecrets())
         }
 
         post("/reload") {
-            call.respond(providerRegistry.reloadConfig().redactSecrets())
+            val actor = call.actor().requireRole(Role.ADMIN)
+            val reloaded = providerRegistry.reloadConfig()
+            audit.record(actor, AuditActions.CONFIG_RELOAD, details = mapOf("providers" to providerNames(reloaded)))
+            call.respond(reloaded.redactSecrets())
         }
     }
 }
+
+private fun providerNames(config: ShepherdConfig): String = config.providers.joinToString(",") { provider -> provider.name }

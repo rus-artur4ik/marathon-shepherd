@@ -44,15 +44,15 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 2 — Identity and multi-client access
 
-- [ ] `clients` table; API keys stored as SHA-256 hashes; roles `admin`, `user`,
+- [x] `clients` table; API keys stored as SHA-256 hashes; roles `admin`, `user`,
       `viewer`, `provider`
-- [ ] Bearer auth on `/api/v1/*` and `/mcp`; probes, metrics and API docs stay public
-- [ ] Bootstrap admin: `MSH_ADMIN_TOKEN` or a generated key printed once
-- [ ] Session ownership; only the owner or an admin can release, wait on or extend
-- [ ] Per-client quotas: concurrent devices, session lifetime, priority ceiling
-- [ ] Audit log with `GET /api/v1/audit` and retention
-- [ ] Admin API for clients (create, list, rotate, revoke) and `GET /api/v1/me`
-- [ ] Jenkins library, CLI, scale and integration harnesses send the token
+- [x] Bearer auth on `/api/v1/*` and `/mcp`; probes, metrics and API docs stay public
+- [x] Bootstrap admin: `MSH_ADMIN_TOKEN` or a generated key printed once
+- [x] Session ownership; only the owner or an admin can release, wait on or extend
+- [x] Per-client quotas: concurrent devices, session lifetime, priority ceiling
+- [x] Audit log with `GET /api/v1/audit` and retention
+- [x] Admin API for clients (create, list, rotate, revoke) and `GET /api/v1/me`
+- [x] Jenkins library, CLI, scale and integration harnesses send the token
 
 ## Phase 3 — Device-level control plane
 

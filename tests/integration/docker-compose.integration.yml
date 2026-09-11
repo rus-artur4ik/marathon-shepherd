@@ -148,6 +148,8 @@ services:
       # e.g. MSH_SCENARIO_CONFIG=/etc/msh/msh.scenario-farm-only.yaml docker compose up -d manager
       MSH_CONFIG: "${MSH_SCENARIO_CONFIG:-/etc/msh/msh.integration.yaml}"
       MSH_DATA_DIR: "/var/lib/msh"
+      # Known admin key for the harness; see tests/helpers/common.sh.
+      MSH_ADMIN_TOKEN: "${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
     volumes:
       - "${MSH_INTEGRATION_CONFIG_DIR:-.}:/etc/msh:ro"
       - msh-integration-data:/var/lib/msh

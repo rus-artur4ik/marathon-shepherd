@@ -13,6 +13,7 @@ import com.github.ajalt.clikt.parameters.types.long
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -35,12 +36,16 @@ abstract class BaseCommand(name: String) : CliktCommand(name = name) {
     protected val managerUrl: String by option("--manager", "-s")
         .default(resolveManagerUrl())
     protected val jsonOutput: Boolean by option("--json").flag(default = false)
+    protected val token: String? by option("--token", envvar = "MSH_TOKEN", help = "API key (default: \$MSH_TOKEN)")
 
     protected suspend fun executeRequest(request: suspend (HttpClient) -> HttpResponse): String {
-        val client = createClient()
+        val client = createClient(token)
         try {
             val response = request(client)
             val body = response.bodyAsText()
+            if (response.status == HttpStatusCode.Unauthorized) {
+                throw CliktError("${parseErrorMessage(body)} Set MSH_TOKEN or pass --token.")
+            }
             if (!response.status.isSuccess()) {
                 throw CliktError(parseErrorMessage(body))
             }
@@ -273,9 +278,12 @@ private data class AdapterDeviceProfileResponse(
     val count: Int
 )
 
-private fun createClient(): HttpClient = HttpClient(CIO) {
+private fun createClient(token: String?): HttpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json(jsonCodec)
+    }
+    if (!token.isNullOrBlank()) {
+        defaultRequest { bearerAuth(token) }
     }
 }
 

@@ -153,6 +153,8 @@ services:
       MSH_PORT: "6037"
       MSH_CONFIG: "/etc/msh/msh.yaml"
       MSH_DATA_DIR: "/var/lib/msh"
+      # Known admin key for the harness; see tests/helpers/common.sh.
+      MSH_ADMIN_TOKEN: "${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
     volumes:
       - "../../integration/msh.smoke.yaml:/etc/msh/msh.yaml:ro"
       - msh-smoke-data:/var/lib/msh

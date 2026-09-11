@@ -4,8 +4,16 @@ import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
 import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
 import dev.shepherd.domain.allocation.NoMatchingDevicesReport
 import dev.shepherd.domain.allocation.ProviderMatcher
+import dev.shepherd.domain.audit.AuditActions
+import dev.shepherd.domain.audit.AuditOutcome
+import dev.shepherd.domain.audit.AuditTrail
+import dev.shepherd.domain.auth.Actor
+import dev.shepherd.domain.errors.AccessDeniedException
+import dev.shepherd.domain.errors.QuotaExceededException
+import dev.shepherd.domain.errors.ResourceNotFoundException
 import dev.shepherd.domain.metrics.ManagerMetrics
 import dev.shepherd.domain.model.ApiSelector
+import dev.shepherd.domain.model.OwnerUsage
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.domain.model.SessionStatus.FAILED
@@ -15,11 +23,14 @@ import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.state.StateStore
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 private const val RELEASE_TIMEOUT_MS = 10_000L
 private const val WAIT_POLL_INTERVAL_MS = 1_000L
@@ -29,6 +40,8 @@ private const val STALE_PENDING_HEARTBEAT_SECONDS = 90L
 private val SUPPORTED_DEVICE_TYPES: Set<String> = linkedSetOf(DEVICE_TYPE_PHYSICAL, DEVICE_TYPE_EMULATOR)
 private const val SUPPORTED_DEVICE_TYPES_TEXT = "physical, emulator"
 private const val REJECTED_NO_MATCHING_DEVICES = "no_matching_devices"
+private const val REJECTED_QUOTA = "quota_exceeded"
+private val FINISHED_STATUSES: Set<SessionStatus> = setOf(SessionStatus.RELEASED, SessionStatus.EXPIRED)
 
 class SessionManager(
     private val providerCatalog: ProviderCatalog,
@@ -36,10 +49,20 @@ class SessionManager(
     @Suppress("unused")
     private val configStore: ConfigStore? = null,
     private val metrics: ManagerMetrics = ManagerMetrics.NONE,
+    private val audit: AuditTrail = AuditTrail.NONE,
 ) {
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
 
-    suspend fun createSession(requestedDevices: Int, api: String?, ttlSeconds: Long, deviceType: String? = null): Session {
+    /** Serializes quota check and insert per client, so parallel requests cannot overshoot a device cap. */
+    private val quotaLocks = ConcurrentHashMap<String, Mutex>()
+
+    suspend fun createSession(
+        requestedDevices: Int,
+        api: String?,
+        ttlSeconds: Long,
+        deviceType: String? = null,
+        actor: Actor = Actor.SYSTEM
+    ): Session {
         require(requestedDevices > 0) { "Requested devices must be greater than zero" }
         require(ttlSeconds > 0) { "Session TTL must be greater than zero" }
 
@@ -50,40 +73,117 @@ class SessionManager(
         val providers: List<DeviceProvider> = refreshMatchingProviders(normalizedDeviceType)
         if (!ProviderMatcher.hasRegisteredMatchingDevices(providers, normalizedDeviceType, apiSelector)) {
             metrics.sessionRejected(REJECTED_NO_MATCHING_DEVICES)
+            audit.record(
+                actor,
+                AuditActions.SESSION_CREATE,
+                outcome = AuditOutcome.FAILED,
+                details = mapOf("reason" to REJECTED_NO_MATCHING_DEVICES)
+            )
             throw IllegalStateException(
                 NoMatchingDevicesReport.render(providerCatalog.activeProviders(), normalizedDeviceType, apiSelector)
             )
         }
 
-        val now = Instant.now()
-        val session = Session(
-            id = "sess_${UUID.randomUUID().toString().take(8)}",
-            status = SessionStatus.PENDING,
-            requestedDevices = requestedDevices,
-            allocatedDevices = 0,
-            api = apiSelector.rawValue,
-            deviceType = normalizedDeviceType,
-            adbServers = emptyList(),
-            createdAt = now,
-            expiresAt = now.plusSeconds(ttlSeconds),
-            lastHeartbeatAt = now,
-            releasedAt = null
-        )
+        // The lifetime cap bounds the whole session, so a long TTL cannot outlive it.
+        val effectiveTtlSeconds: Long = actor.quota.maxSessionLifetimeSeconds
+            ?.let { cap -> minOf(ttlSeconds, cap) }
+            ?: ttlSeconds
+
+        val session: Session = withQuotaLock(actor) {
+            val grantedDevices: Int = grantDevices(actor, requestedDevices)
+            val now = Instant.now()
+            Session(
+                id = "sess_${UUID.randomUUID().toString().take(8)}",
+                status = SessionStatus.PENDING,
+                requestedDevices = grantedDevices,
+                allocatedDevices = 0,
+                api = apiSelector.rawValue,
+                deviceType = normalizedDeviceType,
+                adbServers = emptyList(),
+                createdAt = now,
+                expiresAt = now.plusSeconds(effectiveTtlSeconds),
+                lastHeartbeatAt = now,
+                releasedAt = null,
+                ownerId = actor.id,
+                ownerName = actor.name
+            ).also { created -> stateStore.saveSession(created) }
+        }
 
         logger.info(
-            "Creating session {}: maxDevices={}, api={}, deviceType={}",
+            "Created session {} for {}: maxDevices={}, api={}, deviceType={}, ttl={}s",
             session.id,
+            actor.name,
             session.requestedDevices,
             session.api ?: "any",
-            session.deviceType ?: "all"
+            session.deviceType ?: "all",
+            effectiveTtlSeconds
         )
-        stateStore.saveSession(session)
         metrics.sessionCreated(normalizedDeviceType)
+        audit.record(
+            actor,
+            AuditActions.SESSION_CREATE,
+            target = session.id,
+            details = mapOf(
+                "maxDevices" to session.requestedDevices.toString(),
+                "api" to (session.api ?: "any"),
+                "deviceType" to (session.deviceType ?: "any"),
+                "ttlSeconds" to effectiveTtlSeconds.toString()
+            )
+        )
         return attemptReadyAllocation(session.id) ?: session
     }
 
-    suspend fun waitForSession(sessionId: String, timeoutSeconds: Long = DEFAULT_WAIT_TIMEOUT_SECONDS): Session {
+    /** How many of [requestedDevices] the actor's device cap still allows; throws when none. */
+    private suspend fun grantDevices(actor: Actor, requestedDevices: Int): Int {
+        val limit: Int = actor.quota.maxDevices ?: return requestedDevices
+        val inUse: Int = stateStore.usageOf(actor.id).devices
+        val remaining: Int = limit - inUse
+        if (remaining <= 0) {
+            metrics.sessionRejected(REJECTED_QUOTA)
+            audit.record(
+                actor,
+                AuditActions.SESSION_CREATE,
+                outcome = AuditOutcome.DENIED,
+                details = mapOf("reason" to REJECTED_QUOTA, "inUse" to inUse.toString(), "limit" to limit.toString())
+            )
+            throw QuotaExceededException(
+                "Device quota exhausted: '${actor.name}' already holds or waits for $inUse of $limit device(s). " +
+                    "Release a session first."
+            )
+        }
+        // maxDevices is an upper bound for parallelism, so trimming it keeps the request useful.
+        return minOf(requestedDevices, remaining)
+    }
+
+    private suspend fun <T> withQuotaLock(actor: Actor, block: suspend () -> T): T {
+        if (actor.quota.maxDevices == null) {
+            return block()
+        }
+        return quotaLocks.computeIfAbsent(actor.id) { Mutex() }.withLock { block() }
+    }
+
+    private suspend fun requireCanManage(actor: Actor, session: Session, action: String?) {
+        if (actor.canManage(session)) {
+            return
+        }
+        if (action != null) {
+            audit.record(actor, action, target = session.id, outcome = AuditOutcome.DENIED)
+        }
+        throw AccessDeniedException(
+            "Session ${session.id} belongs to ${session.ownerName ?: "another client"}; " +
+                "only its owner or an admin can change it"
+        )
+    }
+
+    suspend fun waitForSession(
+        sessionId: String,
+        timeoutSeconds: Long = DEFAULT_WAIT_TIMEOUT_SECONDS,
+        actor: Actor = Actor.SYSTEM
+    ): Session {
         require(timeoutSeconds > 0) { "timeoutSeconds must be greater than zero" }
+        val target: Session = stateStore.getSession(sessionId)
+            ?: throw ResourceNotFoundException("Session $sessionId not found")
+        requireCanManage(actor, target, action = null)
         val clampedTimeoutSeconds: Long = timeoutSeconds.coerceAtMost(MAX_WAIT_TIMEOUT_SECONDS)
         val deadline: Instant = Instant.now().plusSeconds(clampedTimeoutSeconds)
 
@@ -117,14 +217,30 @@ class SessionManager(
         return stateStore.getSession(sessionId)
     }
 
-    suspend fun releaseSession(sessionId: String): Boolean {
-        return releaseSessionWithStatus(sessionId, SessionStatus.RELEASED)
+    suspend fun releaseSession(sessionId: String, actor: Actor = Actor.SYSTEM): Boolean {
+        val session: Session = stateStore.getSession(sessionId) ?: return false
+        requireCanManage(actor, session, AuditActions.SESSION_RELEASE)
+        val released: Boolean = releaseSessionWithStatus(sessionId, SessionStatus.RELEASED)
+        if (released && session.status !in FINISHED_STATUSES) {
+            audit.record(actor, AuditActions.SESSION_RELEASE, target = sessionId)
+        }
+        return released
     }
 
-    suspend fun listSessions(statusFilter: String? = null): List<Session> {
-        val filter = statusFilter?.let { runCatching { SessionStatus.valueOf(it.uppercase()) }.getOrNull() }
-        return stateStore.listSessions(filter)
+    /** Releases every active session a client owns, e.g. when its key is revoked. */
+    suspend fun releaseSessionsOwnedBy(ownerId: String, actor: Actor): Int {
+        val owned: List<Session> = stateStore.listSessions(statusFilter = null, ownerId = ownerId)
+            .filter { session -> session.status == SessionStatus.PENDING || session.status == SessionStatus.READY }
+        owned.forEach { session -> releaseSession(session.id, actor) }
+        return owned.size
     }
+
+    suspend fun listSessions(statusFilter: String? = null, ownerId: String? = null): List<Session> {
+        val filter = statusFilter?.let { runCatching { SessionStatus.valueOf(it.uppercase()) }.getOrNull() }
+        return stateStore.listSessions(filter, ownerId)
+    }
+
+    suspend fun usageOf(ownerId: String): OwnerUsage = stateStore.usageOf(ownerId)
 
     suspend fun hasActiveSessionsForProvider(providerName: String): Boolean {
         return stateStore.hasActiveLeasesForProvider(providerName)
@@ -136,6 +252,7 @@ class SessionManager(
         for (session in expired) {
             logger.info("Cleaning up expired session {}", session.id)
             releaseSessionWithStatus(session.id, SessionStatus.EXPIRED)
+            audit.record(Actor.SYSTEM, AuditActions.SESSION_EXPIRE, target = session.id, details = ownerDetails(session))
         }
     }
 
@@ -316,6 +433,12 @@ class SessionManager(
         }
         stateStore.updateSessionStatus(sessionId, FAILED)
         metrics.sessionFinished(FAILED, Duration.between(session.createdAt, Instant.now()))
+        audit.record(
+            Actor.SYSTEM,
+            AuditActions.SESSION_FAIL,
+            target = sessionId,
+            details = ownerDetails(session) + mapOf("reason" to "allocation error")
+        )
     }
 
     private suspend fun cleanupStalePendingSessions() {
@@ -328,8 +451,17 @@ class SessionManager(
                 session.lastHeartbeatAt
             )
             releaseSessionWithStatus(session.id, SessionStatus.FAILED)
+            audit.record(
+                Actor.SYSTEM,
+                AuditActions.SESSION_FAIL,
+                target = session.id,
+                details = ownerDetails(session) + mapOf("reason" to "no wait heartbeat while queued")
+            )
         }
     }
+
+    private fun ownerDetails(session: Session): Map<String, String> =
+        session.ownerName?.let { owner -> mapOf("owner" to owner) } ?: emptyMap()
 
     private suspend fun refreshMatchingProviders(deviceType: String?): List<DeviceProvider> {
         return providerCatalog.activeProviders()

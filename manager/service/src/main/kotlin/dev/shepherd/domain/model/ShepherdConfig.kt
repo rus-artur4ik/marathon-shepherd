@@ -1,5 +1,6 @@
 package dev.shepherd.domain.model
 
+import dev.shepherd.domain.auth.ClientQuota
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,8 +14,37 @@ data class ShepherdConfig(
     /** Background polling of adapters that feeds `/health`, `/api/v1/devices` and metrics. */
     val monitoring: MonitoringConfig = MonitoringConfig(),
     /** Upper bounds for manager-to-adapter HTTP calls. */
-    val adapterTimeouts: AdapterTimeoutsConfig = AdapterTimeoutsConfig()
+    val adapterTimeouts: AdapterTimeoutsConfig = AdapterTimeoutsConfig(),
+    /** Limits for API clients. */
+    val quotas: QuotasConfig = QuotasConfig(),
+    /** Audit log retention. */
+    val audit: AuditConfig = AuditConfig()
 )
+
+@Serializable
+data class QuotasConfig(
+    /** Limits for every non-admin client that does not set its own. */
+    val defaults: QuotaConfig = QuotaConfig()
+)
+
+@Serializable
+data class QuotaConfig(
+    val maxDevices: Int? = null,
+    val maxSessionLifetimeSeconds: Long? = null,
+    val maxPriority: Int? = null
+) {
+    fun toQuota(): ClientQuota = ClientQuota(maxDevices, maxSessionLifetimeSeconds, maxPriority)
+}
+
+@Serializable
+data class AuditConfig(
+    /** Audit entries older than this are deleted. */
+    val retentionDays: Long = 90
+) {
+    init {
+        require(retentionDays > 0) { "audit.retentionDays must be positive" }
+    }
+}
 
 @Serializable
 data class MonitoringConfig(

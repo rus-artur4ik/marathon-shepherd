@@ -2,8 +2,10 @@ package dev.shepherd.infra.state
 
 import dev.shepherd.domain.model.ActiveSessionCounts
 import dev.shepherd.domain.model.AdbServer
+import dev.shepherd.domain.model.OwnerUsage
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
+import dev.shepherd.infra.db.ShepherdDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -26,6 +28,8 @@ object Sessions : Table("sessions") {
     val expiresAt = timestamp("expires_at")
     val lastHeartbeatAt = timestamp("last_heartbeat_at")
     val releasedAt = timestamp("released_at").nullable()
+    val ownerId = varchar("owner_id", 64).nullable()
+    val ownerName = varchar("owner_name", 128).nullable()
 
     override val primaryKey = PrimaryKey(id)
 }
@@ -44,20 +48,14 @@ data class SessionLeaseRecord(
     val count: Int
 )
 
-class StateStore(dbPath: String) {
+class StateStore(val db: ShepherdDatabase) {
+    constructor(dbPath: String) : this(ShepherdDatabase.sqlite(dbPath))
+
     private val logger = LoggerFactory.getLogger(StateStore::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
-    init {
-        Database.connect("jdbc:sqlite:$dbPath", driver = "org.sqlite.JDBC")
-        transaction {
-            SchemaUtils.createMissingTablesAndColumns(Sessions, SessionLeases)
-        }
-        logger.info("StateStore initialized at $dbPath")
-    }
-
     suspend fun saveSession(session: Session) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.insert {
                 it[id] = session.id
                 it[status] = session.status.name
@@ -70,12 +68,14 @@ class StateStore(dbPath: String) {
                 it[expiresAt] = session.expiresAt
                 it[lastHeartbeatAt] = session.lastHeartbeatAt
                 it[releasedAt] = session.releasedAt
+                it[ownerId] = session.ownerId
+                it[ownerName] = session.ownerName
             }
         }
     }
 
     suspend fun getSession(sessionId: String): Session? = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.selectAll().where { Sessions.id eq sessionId }
                 .map { row -> rowToSession(row) }
                 .firstOrNull()
@@ -83,7 +83,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun updateSessionStatus(sessionId: String, newStatus: SessionStatus) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.update({ Sessions.id eq sessionId }) {
                 it[status] = newStatus.name
                 if (
@@ -98,7 +98,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun updateSession(session: Session) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.update({ Sessions.id eq session.id }) {
                 it[status] = session.status.name
                 it[requestedDevices] = session.requestedDevices
@@ -114,23 +114,44 @@ class StateStore(dbPath: String) {
         }
     }
 
-    suspend fun listSessions(statusFilter: SessionStatus? = null): List<Session> = withContext(Dispatchers.IO) {
-        transaction {
-            if (statusFilter != null) {
-                Sessions.selectAll().where { Sessions.status eq statusFilter.name }
-                    .map { row -> rowToSession(row) }
+    suspend fun listSessions(statusFilter: SessionStatus? = null, ownerId: String? = null): List<Session> = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            val statusCondition: Op<Boolean> = if (statusFilter != null) {
+                Sessions.status eq statusFilter.name
             } else {
-                Sessions.selectAll().where {
-                    (Sessions.status eq SessionStatus.READY.name) or
-                        (Sessions.status eq SessionStatus.PENDING.name) or
-                        (Sessions.status eq SessionStatus.FAILED.name)
-                }.map { row -> rowToSession(row) }
+                (Sessions.status eq SessionStatus.READY.name) or
+                    (Sessions.status eq SessionStatus.PENDING.name) or
+                    (Sessions.status eq SessionStatus.FAILED.name)
             }
+            val condition: Op<Boolean> = if (ownerId != null) statusCondition and (Sessions.ownerId eq ownerId) else statusCondition
+            Sessions.selectAll().where { condition }
+                .orderBy(Sessions.createdAt to SortOrder.ASC, Sessions.id to SortOrder.ASC)
+                .map { row -> rowToSession(row) }
+        }
+    }
+
+    /** Active sessions and devices of one client; queued sessions count what they asked for. */
+    suspend fun usageOf(ownerId: String): OwnerUsage = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            val rows = Sessions.selectAll().where {
+                (Sessions.ownerId eq ownerId) and
+                    ((Sessions.status eq SessionStatus.PENDING.name) or (Sessions.status eq SessionStatus.READY.name))
+            }.toList()
+            OwnerUsage(
+                activeSessions = rows.size,
+                devices = rows.sumOf { row ->
+                    if (row[Sessions.status] == SessionStatus.PENDING.name) {
+                        row[Sessions.requestedDevices]
+                    } else {
+                        row[Sessions.allocatedDevices]
+                    }
+                }
+            )
         }
     }
 
     suspend fun listExpiredSessions(): List<Session> = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.selectAll().where {
                 (
                     (Sessions.status eq SessionStatus.READY.name) or
@@ -142,7 +163,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun listPendingSessions(): List<Session> = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.selectAll()
                 .where { Sessions.status eq SessionStatus.PENDING.name }
                 .orderBy(Sessions.createdAt to SortOrder.ASC, Sessions.id to SortOrder.ASC)
@@ -151,7 +172,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun touchSessionHeartbeat(sessionId: String, heartbeatAt: Instant) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.update({ Sessions.id eq sessionId }) {
                 it[lastHeartbeatAt] = heartbeatAt
             }
@@ -159,7 +180,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun listStalePendingSessions(staleBefore: Instant): List<Session> = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             Sessions.selectAll().where {
                 (Sessions.status eq SessionStatus.PENDING.name) and
                     (Sessions.lastHeartbeatAt less staleBefore)
@@ -169,7 +190,7 @@ class StateStore(dbPath: String) {
 
     /** Queued and ready session counts plus the devices ready sessions hold, for health and metrics. */
     suspend fun countActiveSessions(): ActiveSessionCounts = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             val sessionCount = Sessions.id.count()
             val allocatedSum = Sessions.allocatedDevices.sum()
             val byStatus: Map<String, Pair<Long, Int>> = Sessions
@@ -191,7 +212,7 @@ class StateStore(dbPath: String) {
     /** True when the database answers a trivial query; backs the readiness probe. */
     suspend fun ping(): Boolean = withContext(Dispatchers.IO) {
         try {
-            transaction { exec("SELECT 1") }
+            transaction(db.database) { exec("SELECT 1") }
             true
         } catch (error: Exception) {
             logger.warn("Database ping failed: {}", error.message)
@@ -200,7 +221,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun saveSessionLease(sessionId: String, providerName: String, leaseId: String, count: Int) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             SessionLeases.insert {
                 it[SessionLeases.sessionId] = sessionId
                 it[SessionLeases.providerName] = providerName
@@ -211,7 +232,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun getSessionLeases(sessionId: String): List<SessionLeaseRecord> = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             SessionLeases.selectAll().where { SessionLeases.sessionId eq sessionId }
                 .map { row ->
                     SessionLeaseRecord(
@@ -225,7 +246,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun hasActiveLeasesForProvider(providerName: String): Boolean = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             SessionLeases.innerJoin(Sessions).selectAll().where {
                 (SessionLeases.providerName eq providerName) and
                     (
@@ -237,7 +258,7 @@ class StateStore(dbPath: String) {
     }
 
     suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
-        transaction {
+        transaction(db.database) {
             SessionLeases.deleteWhere { SessionLeases.sessionId eq sessionId }
             Sessions.deleteWhere { id eq sessionId }
         }
@@ -255,7 +276,9 @@ class StateStore(dbPath: String) {
             createdAt = row[Sessions.createdAt],
             expiresAt = row[Sessions.expiresAt],
             lastHeartbeatAt = row[Sessions.lastHeartbeatAt],
-            releasedAt = row[Sessions.releasedAt]
+            releasedAt = row[Sessions.releasedAt],
+            ownerId = row[Sessions.ownerId],
+            ownerName = row[Sessions.ownerName]
         )
     }
 }

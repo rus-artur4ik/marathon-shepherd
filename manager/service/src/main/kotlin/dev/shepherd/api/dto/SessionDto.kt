@@ -13,5 +13,6 @@ fun Session.toResponse(queuePosition: Int? = null) = SessionResponse(
     adbServers = adbServers,
     queuePosition = queuePosition,
     createdAt = createdAt.toString(),
-    expiresAt = expiresAt.toString()
+    expiresAt = expiresAt.toString(),
+    owner = ownerName
 )

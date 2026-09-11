@@ -12,6 +12,11 @@
 #     install hint — no silent fallback.
 set -euo pipefail
 
+# The manager authenticates every /api/v1 call; docker-compose.scale.yml starts it with
+# this admin key.
+MSH_TEST_ADMIN_TOKEN="${MSH_TEST_ADMIN_TOKEN:-msh-test-admin-token}"
+export MSH_TEST_ADMIN_TOKEN
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.scale.yml"
@@ -104,7 +109,7 @@ stamped "Manager is healthy"
 # ── Phase 4/4: sanity checks (providers + baseline session) ──────────────────
 msh_emit_phase "verifying" 4 4
 stamped "Verifying providers and baseline allocation"
-devices_json="$(curl -sf "${MANAGER_URL}/api/v1/devices" || echo '{"providers":[],"totalAvailable":0,"totalBusy":0}')"
+devices_json="$(curl -sf -H "Authorization: Bearer ${MSH_TEST_ADMIN_TOKEN}" "${MANAGER_URL}/api/v1/devices" || echo '{"providers":[],"totalAvailable":0,"totalBusy":0}')"
 expected_total=$((FAKE_RACK_A_DEVICES + FAKE_RACK_B_DEVICES + FAKE_RACK_C_DEVICES))
 reported_summary="$(echo "${devices_json}" | python3 -c '
 import json, sys
@@ -127,7 +132,7 @@ stamped "Manager sees ${reported_total} devices across ${reported_count} provide
 
 # Baseline end-to-end: one session create + release. Proves the happy path
 # works before we ramp up load.
-session_json="$(curl -sf -X POST -H 'Content-Type: application/json' \
+session_json="$(curl -sf -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer ${MSH_TEST_ADMIN_TOKEN}" \
     -d '{"maxDevices":1,"api":"34","ttlSeconds":30}' \
     "${MANAGER_URL}/api/v1/sessions")"
 session_id="$(echo "${session_json}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')"
@@ -135,7 +140,7 @@ if [[ -z "${session_id}" ]]; then
     echo "!! Failed to create baseline session: ${session_json}" >&2
     exit 1
 fi
-curl -sf -X DELETE "${MANAGER_URL}/api/v1/sessions/${session_id}" >/dev/null
+curl -sf -X DELETE -H "Authorization: Bearer ${MSH_TEST_ADMIN_TOKEN}" "${MANAGER_URL}/api/v1/sessions/${session_id}" >/dev/null
 stamped "Baseline session ${session_id} created+released"
 
 # ── Churn: default driver is the built-in python_churn; opt into k6 ─────────
@@ -156,6 +161,7 @@ if [[ "${MSH_USE_K6:-0}" == "1" ]]; then
     stamped "Driving load with k6 (${K6_TARGET_RPS} RPS for ${K6_DURATION})"
     k6 run \
         -e "MSH_URL=${MANAGER_URL}" \
+        -e "MSH_AUTH=Bearer ${MSH_TEST_ADMIN_TOKEN}" \
         -e "TARGET_RPS=${K6_TARGET_RPS}" \
         -e "DURATION=${K6_DURATION}" \
         -e "API_LEVEL=34" \
@@ -163,7 +169,7 @@ if [[ "${MSH_USE_K6:-0}" == "1" ]]; then
         "${SCRIPT_DIR}/k6_session_churn.js"
 else
     stamped "Driving load with built-in python_churn (${K6_TARGET_RPS} RPS for ${K6_DURATION})"
-    python3 "${SCRIPT_DIR}/python_churn.py" \
+    MSH_TOKEN="${MSH_TEST_ADMIN_TOKEN}" python3 "${SCRIPT_DIR}/python_churn.py" \
         --url "${MANAGER_URL}" \
         --duration-seconds "${K6_DURATION%s}" \
         --target-rps "${K6_TARGET_RPS}" \

@@ -21,7 +21,17 @@ data class Session(
     val createdAt: Instant,
     val expiresAt: Instant,
     val lastHeartbeatAt: Instant,
-    val releasedAt: Instant?
+    val releasedAt: Instant?,
+    /** The client that created the session; null for sessions created before ownership existed. */
+    val ownerId: String? = null,
+    val ownerName: String? = null
+)
+
+/** What one client currently asks for or holds. */
+data class OwnerUsage(
+    val activeSessions: Int,
+    /** Queued sessions count the devices they asked for, ready ones the devices they got. */
+    val devices: Int
 )
 
 /** The wire type is the domain type: an adb endpoint has exactly one shape. */

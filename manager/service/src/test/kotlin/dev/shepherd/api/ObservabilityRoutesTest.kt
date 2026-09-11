@@ -4,6 +4,7 @@ import dev.shepherd.configureServer
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
 import dev.shepherd.infra.state.StateStore
+import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -35,6 +36,7 @@ class ObservabilityRoutesTest {
         application { configureServer(managerServices(providerRegistry, stateStore, sessionManager, metrics)) }
 
         val created = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":1,"api":"34","deviceType":"emulator","ttlSeconds":120}""")
         }
@@ -87,6 +89,7 @@ class ObservabilityRoutesTest {
         configureManager("malformed")
 
         val response = client.post("/api/v1/sessions") {
+            bearerAuth(TEST_ADMIN_TOKEN)
             contentType(ContentType.Application.Json)
             setBody("""{"maxDevices":""")
         }
