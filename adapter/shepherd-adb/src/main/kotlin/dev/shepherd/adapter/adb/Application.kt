@@ -1,8 +1,7 @@
 package dev.shepherd.adapter.adb
 
 import dev.shepherd.adapter.api.AdapterEnv
-import dev.shepherd.adapter.api.adapterRoutes
-import dev.shepherd.adapter.api.configureAdapterAuth
+import dev.shepherd.adapter.api.startAdapterServer
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -10,8 +9,6 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.json.Json
-import org.slf4j.LoggerFactory
 import java.io.File
 
 fun main() {
@@ -39,27 +36,7 @@ fun main() {
 }
 
 internal fun startAdbAdapterServer(handler: AdbAdapterHandler, env: AdapterEnv, adminService: AdbAdminService) {
-    val logger = LoggerFactory.getLogger("dev.shepherd.adapter.${handler.adapterType}")
-    logger.info(
-        "Starting ${handler.adapterType} adapter on port ${env.port}, " +
-            "advertising ${env.accessMode} adb access on request-derived host:${env.advertisedAdbPort}"
-    )
-    if (!env.authEnabled) logger.warn("ADAPTER_SECRET is not set — running WITHOUT authentication")
-
-    embeddedServer(Netty, port = env.port) {
-        install(ContentNegotiation) {
-            json(
-                Json {
-                    prettyPrint = true
-                    encodeDefaults = true
-                }
-            )
-        }
-        install(CallLogging)
-        configureAdapterAuth(env.secret)
-        routing {
-            adapterRoutes(handler, env)
-            adbReloadRoutes(handler, env, adminService)
-        }
-    }.start(wait = true)
+    startAdapterServer(handler, env) {
+        adbReloadRoutes(handler, env, adminService)
+    }
 }

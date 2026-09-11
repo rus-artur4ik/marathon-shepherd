@@ -9,8 +9,44 @@ data class ShepherdConfig(
      * Controls what happens when a new session is requested but no devices are available.
      * Defaults to [NoDeviceMode.FAIL_IMMEDIATELY] (original behaviour).
      */
-    val noDeviceStrategy: NoDeviceStrategyConfig = NoDeviceStrategyConfig()
+    val noDeviceStrategy: NoDeviceStrategyConfig = NoDeviceStrategyConfig(),
+    /** Background polling of adapters that feeds `/health`, `/api/v1/devices` and metrics. */
+    val monitoring: MonitoringConfig = MonitoringConfig(),
+    /** Upper bounds for manager-to-adapter HTTP calls. */
+    val adapterTimeouts: AdapterTimeoutsConfig = AdapterTimeoutsConfig()
 )
+
+@Serializable
+data class MonitoringConfig(
+    /** How often every adapter's `/health` and `/status` is polled in the background. */
+    val providerPollIntervalSeconds: Long = 10,
+    /** Upper bound for one adapter's health or status answer during a poll. */
+    val providerPollTimeoutSeconds: Long = 5
+) {
+    init {
+        require(providerPollIntervalSeconds > 0) { "monitoring.providerPollIntervalSeconds must be positive" }
+        require(providerPollTimeoutSeconds > 0) { "monitoring.providerPollTimeoutSeconds must be positive" }
+    }
+}
+
+/**
+ * Timeouts for each kind of adapter call. Acquire is generous because on-demand adapters
+ * (Cuttlefish) boot devices before they answer; a call that never returns would otherwise
+ * pin a session in allocation forever.
+ */
+@Serializable
+data class AdapterTimeoutsConfig(
+    val healthSeconds: Long = 5,
+    val statusSeconds: Long = 10,
+    val acquireSeconds: Long = 600,
+    val releaseSeconds: Long = 60
+) {
+    init {
+        require(healthSeconds > 0 && statusSeconds > 0 && acquireSeconds > 0 && releaseSeconds > 0) {
+            "adapterTimeouts values must be positive"
+        }
+    }
+}
 
 /**
  * Configuration for the no-device strategy.

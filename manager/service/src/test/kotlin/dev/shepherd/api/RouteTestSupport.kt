@@ -1,12 +1,17 @@
 package dev.shepherd.api
 
+import dev.shepherd.ManagerServices
 import dev.shepherd.adapter.api.*
+import dev.shepherd.domain.FleetMonitor
+import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.model.AdbServer
 import dev.shepherd.domain.provider.AcquireResult
 import dev.shepherd.domain.provider.DevicePoolStatus
 import dev.shepherd.domain.provider.DeviceProvider
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.config.ConfigStore
+import dev.shepherd.infra.metrics.MicrometerManagerMetrics
+import dev.shepherd.infra.state.StateStore
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import java.io.File
@@ -103,3 +108,21 @@ internal class RouteTestProvider(
 
     override suspend fun isHealthy(): Boolean = healthy
 }
+
+/** Wires the HTTP layer the way `main` does, minus the background jobs. */
+internal fun managerServices(
+    providerRegistry: ProviderRegistry,
+    stateStore: StateStore,
+    sessionManager: SessionManager = SessionManager(providerRegistry, stateStore),
+    metrics: MicrometerManagerMetrics = MicrometerManagerMetrics()
+): ManagerServices = ManagerServices(
+    providerRegistry = providerRegistry,
+    stateStore = stateStore,
+    sessionManager = sessionManager,
+    fleetMonitor = FleetMonitor(
+        providerCatalog = providerRegistry,
+        sessionCounts = { stateStore.countActiveSessions() },
+        metrics = metrics
+    ),
+    metrics = metrics
+)

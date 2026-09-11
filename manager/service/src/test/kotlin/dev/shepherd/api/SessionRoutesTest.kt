@@ -1,7 +1,6 @@
 package dev.shepherd.api
 
 import dev.shepherd.configureServer
-import dev.shepherd.domain.DeviceAllocator
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.infra.state.StateStore
 import io.ktor.client.request.*
@@ -25,10 +24,9 @@ class SessionRoutesTest {
         val provider = RouteTestProvider(availableDevices = 1)
         val providerRegistry = createRouteProviderRegistry(tempDir, "create.yaml", listOf(provider))
         val sessionManager = SessionManager(providerRegistry, stateStore)
-        val deviceAllocator = DeviceAllocator(providerRegistry)
 
         application {
-            configureServer(sessionManager, deviceAllocator, providerRegistry)
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         val response = client.post("/api/v1/sessions") {
@@ -50,10 +48,9 @@ class SessionRoutesTest {
         val provider = RouteTestProvider(availableDevices = 1, availableAfterQueryCount = 4)
         val providerRegistry = createRouteProviderRegistry(tempDir, "wait.yaml", listOf(provider))
         val sessionManager = SessionManager(providerRegistry, stateStore)
-        val deviceAllocator = DeviceAllocator(providerRegistry)
 
         application {
-            configureServer(sessionManager, deviceAllocator, providerRegistry)
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         val createResponse = client.post("/api/v1/sessions") {
@@ -89,10 +86,9 @@ class SessionRoutesTest {
         val provider = RouteTestProvider(availableDevices = 0, availableAfterQueryCount = Int.MAX_VALUE)
         val providerRegistry = createRouteProviderRegistry(tempDir, "wait-timeout.yaml", listOf(provider))
         val sessionManager = SessionManager(providerRegistry, stateStore)
-        val deviceAllocator = DeviceAllocator(providerRegistry)
 
         application {
-            configureServer(sessionManager, deviceAllocator, providerRegistry)
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         val createResponse = client.post("/api/v1/sessions") {
@@ -116,10 +112,9 @@ class SessionRoutesTest {
         val stateStore = StateStore(File(tempDir, "missing.db").absolutePath)
         val providerRegistry = createRouteProviderRegistry(tempDir, "missing.yaml", listOf(RouteTestProvider()))
         val sessionManager = SessionManager(providerRegistry, stateStore)
-        val deviceAllocator = DeviceAllocator(providerRegistry)
 
         application {
-            configureServer(sessionManager, deviceAllocator, providerRegistry)
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         val getResponse = client.get("/api/v1/sessions/sess_missing")
@@ -141,10 +136,9 @@ class SessionRoutesTest {
         val pendingProvider = RouteTestProvider(name = "pending-provider", availableDevices = 0, availableAfterQueryCount = Int.MAX_VALUE)
         val providerRegistry = createRouteProviderRegistry(tempDir, "list.yaml", listOf(readyProvider, pendingProvider))
         val sessionManager = SessionManager(providerRegistry, stateStore)
-        val deviceAllocator = DeviceAllocator(providerRegistry)
 
         application {
-            configureServer(sessionManager, deviceAllocator, providerRegistry)
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         val readyResponse = client.post("/api/v1/sessions") {

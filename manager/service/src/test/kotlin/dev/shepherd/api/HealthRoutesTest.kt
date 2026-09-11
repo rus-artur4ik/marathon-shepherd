@@ -1,7 +1,6 @@
 package dev.shepherd.api
 
 import dev.shepherd.configureServer
-import dev.shepherd.domain.DeviceAllocator
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.provider.FakeDeviceProvider
 import dev.shepherd.domain.provider.ProviderRegistry
@@ -35,11 +34,10 @@ class HealthRoutesTest {
         val providerRegistry = ProviderRegistry(configStore, httpClient) { providerConfig, _ ->
             FakeDeviceProvider(name = providerConfig.name, totalDevices = 0)
         }
-        val deviceAllocator = DeviceAllocator(providerRegistry)
         val sessionManager = SessionManager(providerRegistry, stateStore)
 
         try {
-            application { configureServer(sessionManager, deviceAllocator, providerRegistry) }
+            application { configureServer(managerServices(providerRegistry, stateStore, sessionManager)) }
 
             val response = client.get("/live")
             val body = response.bodyAsText()
@@ -70,11 +68,10 @@ class HealthRoutesTest {
         val providerRegistry = ProviderRegistry(configStore, httpClient) { providerConfig, _ ->
             FakeDeviceProvider(name = providerConfig.name, totalDevices = 4)
         }
-        val deviceAllocator = DeviceAllocator(providerRegistry)
         val sessionManager = SessionManager(providerRegistry, stateStore)
 
         try {
-            application { configureServer(sessionManager, deviceAllocator, providerRegistry) }
+            application { configureServer(managerServices(providerRegistry, stateStore, sessionManager)) }
 
             val response = client.get("/health")
 
@@ -109,11 +106,10 @@ class HealthRoutesTest {
         val providerRegistry = ProviderRegistry(configStore, httpClient) { providerConfig, _ ->
             FakeDeviceProvider(name = providerConfig.name, totalDevices = 0, shouldFail = true)
         }
-        val deviceAllocator = DeviceAllocator(providerRegistry)
         val sessionManager = SessionManager(providerRegistry, stateStore)
 
         try {
-            application { configureServer(sessionManager, deviceAllocator, providerRegistry) }
+            application { configureServer(managerServices(providerRegistry, stateStore, sessionManager)) }
 
             val response = client.get("/health")
             val body = response.bodyAsText()

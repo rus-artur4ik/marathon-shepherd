@@ -2,35 +2,58 @@ package dev.shepherd
 
 import dev.shepherd.api.configRoutes
 import dev.shepherd.api.deviceRoutes
+import dev.shepherd.api.docsRoutes
 import dev.shepherd.api.healthRoutes
+import dev.shepherd.api.metricsRoutes
+import dev.shepherd.api.respondError
 import dev.shepherd.api.sessionRoutes
-import dev.shepherd.common.BuildInfo
-import dev.shepherd.domain.DeviceAllocator
+import dev.shepherd.domain.FleetMonitor
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.config.ConfigStore
+import dev.shepherd.infra.metrics.MicrometerManagerMetrics
 import dev.shepherd.infra.state.StateStore
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.server.application.*
-import io.ktor.server.engine.*
-import io.ktor.server.netty.*
-import io.ktor.server.plugins.calllogging.*
-import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.statuspages.*
-import io.ktor.server.response.*
-import io.ktor.server.routing.*
-import kotlinx.coroutines.*
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.http.HttpStatusCode
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
+import io.ktor.server.application.install
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.metrics.micrometer.MicrometerMetrics
+import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.calllogging.CallLogging
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.path
+import io.ktor.server.routing.routing
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.time.Duration
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 
 private val logger = LoggerFactory.getLogger("dev.shepherd.Application")
 private const val DEFAULT_MANAGER_PORT: Int = 6037
 private const val DEFAULT_STATE_STORE_NAME: String = "msh.db"
+private const val CLEANUP_INTERVAL_MS: Long = 60_000L
+private const val ADAPTER_CONNECT_TIMEOUT_MS: Long = 5_000L
+
+/** Probe and scrape paths are hit every few seconds; logging each call buries real traffic. */
+private val QUIET_PATHS: Set<String> = setOf("/live", "/ready", "/health", "/metrics")
+
+/** JSON settings for every manager API response. */
+internal val ApiJson: Json = Json {
+    prettyPrint = true
+    ignoreUnknownKeys = true
+}
 
 fun main(args: Array<String>) {
     val port: Int = readIntEnv("MSH_PORT") ?: DEFAULT_MANAGER_PORT
@@ -44,20 +67,38 @@ fun main(args: Array<String>) {
 
     val configStore = ConfigStore(configPath)
     val stateStore = StateStore(resolveStateStorePath(dataDir))
+    val metrics = MicrometerManagerMetrics()
 
     val httpClient = HttpClient(CIO) {
         install(ClientContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
+        // Per-call deadlines live in RemoteAdapterProvider; this only stops a dead host
+        // from holding a connection attempt open.
+        install(HttpTimeout) {
+            connectTimeoutMillis = ADAPTER_CONNECT_TIMEOUT_MS
+        }
     }
-    val providerRegistry = ProviderRegistry(configStore, httpClient)
-    val deviceAllocator = DeviceAllocator(providerRegistry)
-    val sessionManager = SessionManager(providerRegistry, stateStore, configStore)
+    val providerRegistry = ProviderRegistry(configStore, httpClient, metrics)
+    val sessionManager = SessionManager(providerRegistry, stateStore, configStore, metrics)
+    val fleetMonitor = FleetMonitor(
+        providerCatalog = providerRegistry,
+        sessionCounts = { stateStore.countActiveSessions() },
+        metrics = metrics,
+        pollTimeout = { Duration.ofSeconds(providerRegistry.currentConfig().monitoring.providerPollTimeoutSeconds) }
+    )
+    val services = ManagerServices(
+        providerRegistry = providerRegistry,
+        stateStore = stateStore,
+        sessionManager = sessionManager,
+        fleetMonitor = fleetMonitor,
+        metrics = metrics
+    )
 
-    val cleanupScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    cleanupScope.launch {
+    val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    backgroundScope.launch {
         while (true) {
-            delay(60_000L)
+            delay(CLEANUP_INTERVAL_MS)
             try {
                 sessionManager.cleanupExpiredSessions()
             } catch (e: Exception) {
@@ -65,12 +106,15 @@ fun main(args: Array<String>) {
             }
         }
     }
+    fleetMonitor.start(backgroundScope) {
+        Duration.ofSeconds(providerRegistry.currentConfig().monitoring.providerPollIntervalSeconds)
+    }
 
     logger.info("Starting Marathon Shepherd on port $port")
     logger.info("Config: $configPath, providers: ${providerRegistry.activeProviders().size}")
 
     embeddedServer(Netty, port = port) {
-        configureServer(sessionManager, deviceAllocator, providerRegistry)
+        configureServer(services)
     }.start(wait = true)
 }
 
@@ -99,35 +143,49 @@ private fun resolveStateStorePath(dataDir: String): String {
     return File(dataDir, DEFAULT_STATE_STORE_NAME).absolutePath
 }
 
-fun Application.configureServer(sessionManager: SessionManager, deviceAllocator: DeviceAllocator, providerRegistry: ProviderRegistry) {
+fun Application.configureServer(services: ManagerServices) {
     install(ContentNegotiation) {
-        json(
-            Json {
-                prettyPrint = true
-                ignoreUnknownKeys = true
-            }
-        )
+        json(ApiJson)
     }
 
-    install(CallLogging)
+    install(CallLogging) {
+        filter { call -> call.request.path() !in QUIET_PATHS }
+    }
 
+    install(MicrometerMetrics) {
+        registry = services.metrics.registry
+        distributionStatisticConfig = MicrometerManagerMetrics.HTTP_SERVER_DISTRIBUTION
+    }
+
+    // Error bodies are written as text rather than through content negotiation, so they
+    // keep their shape on routes that negotiate a different format (MCP, event streams).
     install(StatusPages) {
+        exception<BadRequestException> { call, cause ->
+            call.respondError(HttpStatusCode.BadRequest, cause.rootMessage() ?: "Malformed request")
+        }
         exception<IllegalArgumentException> { call, cause ->
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to (cause.message ?: "Invalid argument")))
+            call.respondError(HttpStatusCode.BadRequest, cause.message ?: "Invalid argument")
         }
         exception<IllegalStateException> { call, cause ->
-            call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to (cause.message ?: "Service unavailable")))
+            call.respondError(HttpStatusCode.ServiceUnavailable, cause.message ?: "Service unavailable")
         }
         exception<Exception> { call, cause ->
             logger.error("Unhandled exception", cause)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+            call.respondError(HttpStatusCode.InternalServerError, "Internal server error")
         }
     }
 
     routing {
-        sessionRoutes(sessionManager)
-        deviceRoutes(deviceAllocator)
-        configRoutes(providerRegistry, sessionManager)
-        healthRoutes(deviceAllocator, version = BuildInfo.version)
+        healthRoutes(services)
+        metricsRoutes(services.metrics.registry)
+        docsRoutes()
+        sessionRoutes(services.sessionManager)
+        deviceRoutes(services.fleetMonitor, services::snapshotMaxAge)
+        configRoutes(services.providerRegistry, services.sessionManager)
     }
 }
+
+/** The innermost message of a wrapped exception, e.g. the JSON parser's complaint behind a 400. */
+private fun Throwable.rootMessage(): String? = generateSequence(this) { error -> error.cause }
+    .mapNotNull { error -> error.message }
+    .lastOrNull()

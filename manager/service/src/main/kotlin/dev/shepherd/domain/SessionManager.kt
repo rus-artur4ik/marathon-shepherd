@@ -4,6 +4,7 @@ import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
 import dev.shepherd.adapter.api.DEVICE_TYPE_PHYSICAL
 import dev.shepherd.domain.allocation.NoMatchingDevicesReport
 import dev.shepherd.domain.allocation.ProviderMatcher
+import dev.shepherd.domain.metrics.ManagerMetrics
 import dev.shepherd.domain.model.ApiSelector
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
@@ -27,12 +28,14 @@ private const val MAX_WAIT_TIMEOUT_SECONDS = 30L
 private const val STALE_PENDING_HEARTBEAT_SECONDS = 90L
 private val SUPPORTED_DEVICE_TYPES: Set<String> = linkedSetOf(DEVICE_TYPE_PHYSICAL, DEVICE_TYPE_EMULATOR)
 private const val SUPPORTED_DEVICE_TYPES_TEXT = "physical, emulator"
+private const val REJECTED_NO_MATCHING_DEVICES = "no_matching_devices"
 
 class SessionManager(
     private val providerCatalog: ProviderCatalog,
     private val stateStore: StateStore,
     @Suppress("unused")
     private val configStore: ConfigStore? = null,
+    private val metrics: ManagerMetrics = ManagerMetrics.NONE,
 ) {
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
 
@@ -45,8 +48,11 @@ class SessionManager(
         cleanupStalePendingSessions()
 
         val providers: List<DeviceProvider> = refreshMatchingProviders(normalizedDeviceType)
-        check(ProviderMatcher.hasRegisteredMatchingDevices(providers, normalizedDeviceType, apiSelector)) {
-            NoMatchingDevicesReport.render(providerCatalog.activeProviders(), normalizedDeviceType, apiSelector)
+        if (!ProviderMatcher.hasRegisteredMatchingDevices(providers, normalizedDeviceType, apiSelector)) {
+            metrics.sessionRejected(REJECTED_NO_MATCHING_DEVICES)
+            throw IllegalStateException(
+                NoMatchingDevicesReport.render(providerCatalog.activeProviders(), normalizedDeviceType, apiSelector)
+            )
         }
 
         val now = Instant.now()
@@ -72,6 +78,7 @@ class SessionManager(
             session.deviceType ?: "all"
         )
         stateStore.saveSession(session)
+        metrics.sessionCreated(normalizedDeviceType)
         return attemptReadyAllocation(session.id) ?: session
     }
 
@@ -271,6 +278,7 @@ class SessionManager(
                 lastHeartbeatAt = Instant.now()
             )
             stateStore.updateSession(readySession)
+            metrics.sessionAllocated(Duration.between(session.createdAt, Instant.now()), totalAllocated)
             logger.info(
                 "Session {} ready with {} of {} requested device(s)",
                 readySession.id,
@@ -280,7 +288,7 @@ class SessionManager(
             return readySession
         } catch (error: Exception) {
             logger.error("Failed to allocate session {}", session.id, error)
-            rollbackFailedSession(session.id, leases)
+            rollbackFailedSession(session, leases)
             throw when (error) {
                 is IllegalArgumentException -> error
                 is IllegalStateException -> error
@@ -289,7 +297,8 @@ class SessionManager(
         }
     }
 
-    private suspend fun rollbackFailedSession(sessionId: String, leases: List<SessionLease>) {
+    private suspend fun rollbackFailedSession(session: Session, leases: List<SessionLease>) {
+        val sessionId: String = session.id
         for (lease in leases.asReversed()) {
             val provider = providerCatalog.resolveProvider(lease.providerName)
             if (provider == null) {
@@ -306,6 +315,7 @@ class SessionManager(
             }
         }
         stateStore.updateSessionStatus(sessionId, FAILED)
+        metrics.sessionFinished(FAILED, Duration.between(session.createdAt, Instant.now()))
     }
 
     private suspend fun cleanupStalePendingSessions() {
@@ -392,6 +402,10 @@ class SessionManager(
         }
 
         stateStore.updateSessionStatus(sessionId, targetStatus)
+        // A FAILED session lingers until it expires; count it once, when it left the queue.
+        if (session.status == SessionStatus.PENDING || session.status == SessionStatus.READY) {
+            metrics.sessionFinished(targetStatus, Duration.between(session.createdAt, Instant.now()))
+        }
         return true
     }
 }

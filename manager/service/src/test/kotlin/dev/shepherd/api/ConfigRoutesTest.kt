@@ -1,7 +1,6 @@
 package dev.shepherd.api
 
 import dev.shepherd.configureServer
-import dev.shepherd.domain.DeviceAllocator
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.model.REDACTED_SECRET
 import dev.shepherd.domain.provider.ProviderRegistry
@@ -30,11 +29,7 @@ class ConfigRoutesTest {
         val stateStore = StateStore(File(tempDir, "config.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         val response = client.get("/api/v1/config")
@@ -58,11 +53,7 @@ class ConfigRoutesTest {
         val stateStore = StateStore(File(tempDir, "config-secret.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         val body = client.get("/api/v1/config").bodyAsText()
@@ -86,11 +77,7 @@ class ConfigRoutesTest {
         val stateStore = StateStore(File(tempDir, "config-roundtrip.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         // A read-modify-write cycle sends the placeholder straight back; it must not be
@@ -117,11 +104,7 @@ class ConfigRoutesTest {
         val stateStore = StateStore(File(tempDir, "config-update.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         val response = client.put("/api/v1/config") {
@@ -147,11 +130,7 @@ class ConfigRoutesTest {
         val sessionManager = SessionManager(providerRegistry, stateStore)
 
         application {
-            configureServer(
-                sessionManager = sessionManager,
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore, sessionManager))
         }
 
         client.post("/api/v1/sessions") {
@@ -188,11 +167,7 @@ class ConfigRoutesTest {
         val stateStore = StateStore(File(tempDir, "reload.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         configFile.writeText(

@@ -1,0 +1,110 @@
+# Marathon Shepherd — Prometheus alerting rules.
+#
+# Usable two ways:
+#   1. Standalone rule file: add this path to `rule_files:` in prometheus.yml.
+#   2. Kubernetes: paste the `groups:` block below as the `spec:` of a
+#      PrometheusRule CRD (spec.groups has the identical shape), e.g.:
+#
+#        apiVersion: monitoring.coreos.com/v1
+#        kind: PrometheusRule
+#        metadata:
+#          name: marathon-shepherd
+#          labels:
+#            release: prometheus   # match your Prometheus Operator's ruleSelector
+#        spec:
+#          groups:
+#            - name: marathon-shepherd
+#              rules: [...]        # copy the "rules:" list below verbatim
+#
+# All PromQL here uses only the metric names documented in
+# deploy/observability/README.md. See deploy/observability/prometheus/scrape-config.example.yml
+# for how the "marathon-shepherd-manager" / "marathon-shepherd-adapters" scrape jobs
+# (and their `up{job=...}` series) are produced.
+
+groups:
+  - name: marathon-shepherd
+    rules:
+      - alert: ShepherdProviderDown
+        expr: msh_provider_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider {{ $labels.provider }} is down"
+          description: "msh_provider_up{provider=\"{{ $labels.provider }}\"} has been 0 for at least 5 minutes: the manager's last health check against this adapter failed. Sessions requesting devices from this provider cannot be served."
+
+      - alert: ShepherdAllProvidersDown
+        expr: sum(msh_provider_up) == 0 and count(msh_provider_up) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All providers are down"
+          description: "Every configured provider has failed its health check (sum(msh_provider_up) == 0) for at least 2 minutes. No devices can be allocated to any session fleet-wide."
+
+      # manager stopped polling adapters
+      - alert: ShepherdFleetPollStale
+        expr: time() - msh_fleet_last_poll_seconds > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fleet poll is stale"
+          description: "The manager has not completed a fleet poll in {{ $value | humanizeDuration }} (threshold 120s), for at least 5 minutes. Provider and device-pool state shown by the manager may be out of date because it stopped polling adapters."
+
+      - alert: ShepherdSessionsStarved
+        expr: sum(msh_sessions{status="pending"}) > 0 and sum(msh_provider_devices{state="available"}) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sessions are queued with no available devices"
+          description: "{{ $value }} session(s) have been pending for at least 15 minutes while sum(msh_provider_devices{state=\"available\"}) is 0. The queue cannot drain until a provider frees or adds capacity."
+
+      - alert: ShepherdQueueWaitHigh
+        expr: histogram_quantile(0.95, sum(rate(msh_sessions_queue_wait_seconds_bucket[30m])) by (le)) > 600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Session queue wait is high"
+          description: "p95 session queue wait over the trailing 30 minutes is {{ $value | humanizeDuration }} (threshold 600s), sustained for at least 15 minutes. Sessions are waiting too long to receive devices."
+
+      - alert: ShepherdAdapterErrors
+        expr: (sum(rate(msh_adapter_requests_seconds_count{outcome=~"error|timeout|http_error"}[10m])) by (provider) / sum(rate(msh_adapter_requests_seconds_count[10m])) by (provider)) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High adapter error rate for provider {{ $labels.provider }}"
+          description: "{{ $labels.provider }} has an adapter request error ratio (outcome one of error/timeout/http_error) of {{ $value | humanizePercentage }} over the trailing 10 minutes (threshold 20%)."
+
+      - alert: ShepherdSessionFailures
+        expr: sum(increase(msh_sessions_finished_total{status="failed"}[30m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated session failures"
+          description: "{{ $value }} sessions finished with status=failed in the last 30 minutes (threshold 5). Check adapter health and recent manager/adapter logs."
+
+      # job name must match the `job_name` used for the manager in your Prometheus
+      # scrape config (see scrape-config.example.yml: job marathon-shepherd-manager)
+      - alert: ShepherdManagerDown
+        expr: up{job="marathon-shepherd-manager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Marathon Shepherd manager is down"
+          description: "Prometheus has been unable to scrape the manager (job=\"marathon-shepherd-manager\", instance {{ $labels.instance }}) for at least 2 minutes. No sessions can be created or served."
+
+      # job name must match the `job_name` used for adapters in your Prometheus
+      # scrape config (see scrape-config.example.yml: job marathon-shepherd-adapters)
+      - alert: ShepherdAdapterScrapeDown
+        expr: up{job="marathon-shepherd-adapters"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Adapter target {{ $labels.instance }} is unreachable"
+          description: "Prometheus has been unable to scrape adapter instance {{ $labels.instance }} (job=\"marathon-shepherd-adapters\") for at least 5 minutes. That adapter's own pool/acquire/release metrics are unavailable, though the manager's msh_provider_up for the corresponding provider is the better signal for whether it can still serve sessions."

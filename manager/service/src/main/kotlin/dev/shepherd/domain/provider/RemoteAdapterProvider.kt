@@ -1,28 +1,58 @@
 package dev.shepherd.domain.provider
 
-import dev.shepherd.adapter.api.*
+import dev.shepherd.adapter.api.ACCESS_AUTH_NETWORK
+import dev.shepherd.adapter.api.ACCESS_EXPOSURE_DIRECT_TCP
+import dev.shepherd.adapter.api.ACCESS_PROTOCOL_ADB
+import dev.shepherd.adapter.api.ACCESS_TRANSPORT_TCP
+import dev.shepherd.adapter.api.AcquireRequest
+import dev.shepherd.adapter.api.AcquireResponse
+import dev.shepherd.adapter.api.AdapterAccess
+import dev.shepherd.adapter.api.AdapterCapabilities
+import dev.shepherd.adapter.api.AdapterConnection
+import dev.shepherd.adapter.api.AdapterConnectionAuth
+import dev.shepherd.adapter.api.AdapterDeviceProfile
+import dev.shepherd.adapter.api.PoolStatusResponse
+import dev.shepherd.adapter.api.preferredAdbTcpConnection
+import dev.shepherd.domain.metrics.ManagerMetrics
+import dev.shepherd.domain.model.AdapterTimeoutsConfig
 import dev.shepherd.domain.model.AdbServer
-import io.ktor.client.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
+import io.ktor.client.HttpClient
+import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import java.time.Duration
 
 /**
- * Generic HTTP client for any Adapter (adb or farm).
+ * Generic HTTP client for any Adapter (adb, farm or cuttlefish).
  * The Manager doesn't care what type of adapter is on the other end —
- * both expose the same REST contract defined in :adapter:api.
+ * all of them expose the same REST contract defined in :adapter:contract.
  *
  * Sends Authorization: Bearer <secret> on all protected endpoints.
  * /health is called without auth (public on the adapter side).
+ *
+ * Every call is bounded by [timeouts] and reported to [metrics]. A failing or hung adapter
+ * degrades to an empty answer instead of blocking the caller indefinitely.
  */
 class RemoteAdapterProvider(
     override val name: String,
     private val adapterUrl: String,
     private val accessHost: String,
     private val secret: String,
-    private val httpClient: HttpClient
+    private val httpClient: HttpClient,
+    private val metrics: ManagerMetrics = ManagerMetrics.NONE,
+    private val timeouts: () -> AdapterTimeoutsConfig = { AdapterTimeoutsConfig() }
 ) : DeviceProvider {
 
     private val logger = LoggerFactory.getLogger(RemoteAdapterProvider::class.java)
@@ -53,8 +83,8 @@ class RemoteAdapterProvider(
     override val capabilities: AdapterCapabilities get() = cache.capabilities
     override val inventory: List<AdapterDeviceProfile> get() = cache.inventory
 
-    override suspend fun queryDevices(): DevicePoolStatus {
-        return try {
+    override suspend fun queryDevices(): DevicePoolStatus =
+        call(OPERATION_STATUS, timeouts().statusSeconds, fallback = EMPTY_POOL) { outcome ->
             val response = httpClient.get("$adapterUrl/status") {
                 if (secret.isNotBlank()) bearerAuth(secret)
             }
@@ -67,66 +97,56 @@ class RemoteAdapterProvider(
                     total = body.pool.total
                 )
             } else {
-                logger.warn("Adapter '$name' status failed: ${response.status}")
-                DevicePoolStatus(available = 0, busy = 0, total = 0)
+                outcome.value = OUTCOME_HTTP_ERROR
+                logger.warn("Adapter '{}' status failed: {}", name, response.status)
+                EMPTY_POOL
             }
-        } catch (e: Exception) {
-            logger.error("Adapter '$name' status error: ${e.message}")
-            DevicePoolStatus(available = 0, busy = 0, total = 0)
         }
-    }
 
-    override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult {
-        return try {
-            val request = AcquireRequest(count = count, apiLevel = apiLevel, ttlSeconds = ttlSeconds)
-            val response = httpClient.post("$adapterUrl/acquire") {
-                contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(AcquireRequest.serializer(), request))
-                if (secret.isNotBlank()) bearerAuth(secret)
-            }
-            val responseBody: String = response.bodyAsText()
+    override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult = call(
+        OPERATION_ACQUIRE,
+        timeouts().acquireSeconds,
+        fallback = EMPTY_ACQUIRE,
+        context = "count=$count api=$apiLevel ttl=${ttlSeconds}s"
+    ) { outcome ->
+        val request = AcquireRequest(count = count, apiLevel = apiLevel, ttlSeconds = ttlSeconds)
+        val response = httpClient.post("$adapterUrl/acquire") {
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(AcquireRequest.serializer(), request))
+            if (secret.isNotBlank()) bearerAuth(secret)
+        }
+        val responseBody: String = response.bodyAsText()
 
-            if (response.status.isSuccess()) {
-                val body: AcquireResponse = json.decodeFromString(responseBody)
-                val normalizedAccess: AdapterAccess = normalizeAccessHost(body.access, accessHost)
-                cache = AdapterCache(normalizedAccess, body.capabilities, body.inventory)
-                val adbServers: List<AdbServer> = normalizedAccess.connections
-                    .filter { connection ->
-                        connection.protocol == ACCESS_PROTOCOL_ADB &&
-                            connection.transport == ACCESS_TRANSPORT_TCP
-                    }
-                    .map { connection -> connection.toAdbServer() }
-                val preferredConnection: AdapterConnection? = normalizedAccess.preferredAdbTcpConnection()
-                logger.info(
-                    "Adapter '$name': acquired ${body.acquiredCount}, " +
-                        "preferredAccess=${preferredConnection?.host}:${preferredConnection?.port}, " +
-                        "adbServers=${adbServers.joinToString { server -> "${server.host}:${server.port}" }}"
-                )
-                AcquireResult(
-                    leaseId = body.leaseId,
-                    acquiredCount = body.acquiredCount,
-                    adbServers = adbServers
-                )
-            } else {
-                logger.error(
-                    "Adapter '$name' acquire failed for count={}, api={}, ttl={}s: {} body={}",
-                    count,
-                    apiLevel,
-                    ttlSeconds,
-                    response.status,
-                    summarizeBody(responseBody)
-                )
-                AcquireResult(leaseId = "", acquiredCount = 0)
-            }
-        } catch (e: Exception) {
-            logger.error(
-                "Adapter '$name' acquire error for count={}, api={}, ttl={}s: {}",
-                count,
-                apiLevel,
-                ttlSeconds,
-                e.message
+        if (response.status.isSuccess()) {
+            val body: AcquireResponse = json.decodeFromString(responseBody)
+            val normalizedAccess: AdapterAccess = normalizeAccessHost(body.access, accessHost)
+            cache = AdapterCache(normalizedAccess, body.capabilities, body.inventory)
+            val adbServers: List<AdbServer> = normalizedAccess.connections
+                .filter { connection ->
+                    connection.protocol == ACCESS_PROTOCOL_ADB &&
+                        connection.transport == ACCESS_TRANSPORT_TCP
+                }
+                .map { connection -> connection.toAdbServer() }
+            val preferredConnection: AdapterConnection? = normalizedAccess.preferredAdbTcpConnection()
+            logger.info(
+                "Adapter '$name': acquired ${body.acquiredCount}, " +
+                    "preferredAccess=${preferredConnection?.host}:${preferredConnection?.port}, " +
+                    "adbServers=${adbServers.joinToString { server -> "${server.host}:${server.port}" }}"
             )
-            AcquireResult(leaseId = "", acquiredCount = 0)
+            AcquireResult(
+                leaseId = body.leaseId,
+                acquiredCount = body.acquiredCount,
+                adbServers = adbServers
+            )
+        } else {
+            // 503 is the contract's "nothing free right now" — routine while sessions
+            // race for the same devices, not an adapter fault.
+            val unavailable = response.status == HttpStatusCode.ServiceUnavailable
+            outcome.value = if (unavailable) OUTCOME_UNAVAILABLE else OUTCOME_HTTP_ERROR
+            val message = "Adapter '{}' acquire failed for count={}, api={}, ttl={}s: {} body={}"
+            val arguments = arrayOf(name, count, apiLevel, ttlSeconds, response.status, summarizeBody(responseBody))
+            if (unavailable) logger.warn(message, *arguments) else logger.error(message, *arguments)
+            EMPTY_ACQUIRE
         }
     }
 
@@ -153,24 +173,56 @@ class RemoteAdapterProvider(
 
     override suspend fun release(leaseId: String) {
         if (leaseId.isBlank()) return
-        try {
+        call(OPERATION_RELEASE, timeouts().releaseSeconds, fallback = Unit, context = "lease=$leaseId") { outcome ->
             val response = httpClient.delete("$adapterUrl/release/$leaseId") {
                 if (secret.isNotBlank()) bearerAuth(secret)
             }
             if (!response.status.isSuccess()) {
-                logger.error("Adapter '$name' release failed for $leaseId: ${response.status}")
+                outcome.value = OUTCOME_HTTP_ERROR
+                logger.error("Adapter '{}' release failed for {}: {}", name, leaseId, response.status)
             }
-        } catch (e: Exception) {
-            logger.error("Adapter '$name' release error for $leaseId: ${e.message}")
         }
     }
 
-    override suspend fun isHealthy(): Boolean {
+    // /health is public — no auth header. Failures are expected while an adapter is down
+    // and the fleet monitor logs state changes, so they are not logged per call here.
+    override suspend fun isHealthy(): Boolean =
+        call(OPERATION_HEALTH, timeouts().healthSeconds, fallback = false, logFailures = false) { outcome ->
+            httpClient.get("$adapterUrl/health").status.isSuccess().also { healthy ->
+                if (!healthy) outcome.value = OUTCOME_HTTP_ERROR
+            }
+        }
+
+    private class CallOutcome {
+        var value: String = OUTCOME_SUCCESS
+    }
+
+    /** Runs one adapter call under a timeout, records its outcome and duration, and never throws except on cancellation. */
+    private suspend fun <T> call(
+        operation: String,
+        timeoutSeconds: Long,
+        fallback: T,
+        context: String = "",
+        logFailures: Boolean = true,
+        block: suspend (CallOutcome) -> T
+    ): T {
+        val outcome = CallOutcome()
+        val startedAt: Long = System.nanoTime()
         return try {
-            // /health is public — no auth header needed
-            httpClient.get("$adapterUrl/health").status.isSuccess()
-        } catch (e: Exception) {
-            false
+            withTimeout(timeoutSeconds * MILLIS_PER_SECOND) { block(outcome) }
+        } catch (timeout: TimeoutCancellationException) {
+            outcome.value = OUTCOME_TIMEOUT
+            if (logFailures) logger.error("Adapter '{}' {} timed out after {}s {}", name, operation, timeoutSeconds, context)
+            fallback
+        } catch (cancelled: CancellationException) {
+            outcome.value = OUTCOME_CANCELLED
+            throw cancelled
+        } catch (error: Exception) {
+            outcome.value = OUTCOME_ERROR
+            if (logFailures) logger.error("Adapter '{}' {} error {}: {}", name, operation, context, error.message)
+            fallback
+        } finally {
+            metrics.adapterCall(name, operation, outcome.value, Duration.ofNanos(System.nanoTime() - startedAt))
         }
     }
 
@@ -201,6 +253,22 @@ class RemoteAdapterProvider(
         } else {
             normalizedBody.take(REMOTE_PROVIDER_BODY_LIMIT) + "...(truncated)"
         }
+    }
+
+    private companion object {
+        const val MILLIS_PER_SECOND: Long = 1_000L
+        const val OPERATION_HEALTH = "health"
+        const val OPERATION_STATUS = "status"
+        const val OPERATION_ACQUIRE = "acquire"
+        const val OPERATION_RELEASE = "release"
+        const val OUTCOME_SUCCESS = "success"
+        const val OUTCOME_UNAVAILABLE = "unavailable"
+        const val OUTCOME_HTTP_ERROR = "http_error"
+        const val OUTCOME_ERROR = "error"
+        const val OUTCOME_TIMEOUT = "timeout"
+        const val OUTCOME_CANCELLED = "cancelled"
+        val EMPTY_POOL = DevicePoolStatus(available = 0, busy = 0, total = 0)
+        val EMPTY_ACQUIRE = AcquireResult(leaseId = "", acquiredCount = 0)
     }
 }
 

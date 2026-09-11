@@ -26,3 +26,15 @@ data class Session(
 
 /** The wire type is the domain type: an adb endpoint has exactly one shape. */
 typealias AdbServer = dev.shepherd.protocol.AdbServer
+
+/** Counts of sessions that are queued or holding devices. */
+data class ActiveSessionCounts(
+    val pending: Int,
+    val ready: Int,
+    /** Devices held by READY sessions. */
+    val allocatedDevices: Int
+) {
+    companion object {
+        val NONE = ActiveSessionCounts(pending = 0, ready = 0, allocatedDevices = 0)
+    }
+}

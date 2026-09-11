@@ -1,8 +1,6 @@
 package dev.shepherd.api
 
 import dev.shepherd.configureServer
-import dev.shepherd.domain.DeviceAllocator
-import dev.shepherd.domain.SessionManager
 import dev.shepherd.infra.state.StateStore
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -54,11 +52,7 @@ class DeviceRoutesTest {
         val stateStore = StateStore(File(tempDir, "devices.db").absolutePath)
 
         application {
-            configureServer(
-                sessionManager = SessionManager(providerRegistry, stateStore),
-                deviceAllocator = DeviceAllocator(providerRegistry),
-                providerRegistry = providerRegistry
-            )
+            configureServer(managerServices(providerRegistry, stateStore))
         }
 
         val response = client.get("/api/v1/devices")

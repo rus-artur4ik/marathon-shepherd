@@ -7,6 +7,7 @@ import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import java.time.Duration
 
 data class AdapterStatus(
     val pool: AdapterPool,
@@ -61,7 +62,7 @@ abstract class AdapterHandler(val adapterType: String, val version: String = Bui
 }
 
 /** Registers all four adapter endpoints. Call this once from [startAdapterServer]. */
-fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
+fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv, metrics: AdapterMetrics? = null) {
     get("/health") {
         call.respond(
             HealthResponse(
@@ -77,6 +78,7 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
     authenticate(ADAPTER_AUTH_SCHEME, optional = env.adapterAuthOptional) {
         get("/status") {
             val result: AdapterStatus = handler.status()
+            metrics?.statusObserved(result.pool)
             val requestHost: String = call.request.host().ifBlank { "unknown" }
             call.respond(
                 PoolStatusResponse(
@@ -91,7 +93,14 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
 
         post("/acquire") {
             val request = call.receive<AcquireRequest>()
-            val result: AcquireResult = handler.acquire(request)
+            val startedAt: Long = System.nanoTime()
+            val result: AcquireResult = try {
+                handler.acquire(request)
+            } catch (error: Exception) {
+                metrics?.acquireFailed(Duration.ofNanos(System.nanoTime() - startedAt))
+                throw error
+            }
+            metrics?.acquireCompleted(request.count, result.acquiredCount, Duration.ofNanos(System.nanoTime() - startedAt))
 
             if (result.acquiredCount == 0) {
                 call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "No devices available"))
@@ -121,7 +130,9 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv) {
             val leaseId = call.parameters["leaseId"]
                 ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing leaseId"))
 
-            if (handler.release(leaseId)) {
+            val released: Boolean = handler.release(leaseId)
+            metrics?.releaseCompleted(released)
+            if (released) {
                 call.respond(HttpStatusCode.OK, mapOf("status" to "released"))
             } else {
                 call.respond(

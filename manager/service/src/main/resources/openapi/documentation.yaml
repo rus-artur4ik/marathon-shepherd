@@ -1,0 +1,697 @@
+openapi: 3.1.0
+info:
+  title: Marathon Shepherd Manager API
+  version: "__VERSION__"
+  summary: Control plane that leases Android test devices to CI jobs, developers and bots.
+  description: |
+    The manager schedules **sessions**. A session asks for up to N devices matching a
+    capability (API level, physical or emulator). It stays `PENDING` in a FIFO queue until
+    matching devices are free, then becomes `READY` with the adb server endpoints to use.
+    Release it when done; sessions past their TTL are reclaimed automatically, so a crashed
+    client cannot strand a device.
+
+    The probes (`/live`, `/ready`, `/health`), `/metrics` and this document are
+    unauthenticated. Keep the manager port on a trusted network.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: /
+tags:
+  - name: sessions
+    description: Request devices, wait for them and give them back.
+  - name: devices
+    description: What the fleet holds right now.
+  - name: config
+    description: Provider configuration (`msh.yaml`).
+  - name: operations
+    description: Probes, metrics and this document.
+paths:
+  /live:
+    get:
+      tags: [operations]
+      operationId: getLiveness
+      summary: Process liveness
+      description: Answers as long as the process runs. Never touches a dependency.
+      responses:
+        "200":
+          description: The process is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+  /ready:
+    get:
+      tags: [operations]
+      operationId: getReadiness
+      summary: Readiness to serve the API
+      description: Checks the state database. Use it for load-balancer and Kubernetes readiness probes.
+      responses:
+        "200":
+          description: Ready to serve requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: Not ready; the database is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+  /health:
+    get:
+      tags: [operations]
+      operationId: getHealth
+      summary: Fleet health
+      description: |
+        Provider health, pool sizes and session counts from the background snapshot, which
+        is refreshed every `monitoring.providerPollIntervalSeconds`. Returns 503 when no
+        provider is healthy.
+      responses:
+        "200":
+          description: At least one provider is healthy (`healthy` or `degraded`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: No provider is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /metrics:
+    get:
+      tags: [operations]
+      operationId: getMetrics
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition format 0.0.4.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /openapi.yaml:
+    get:
+      tags: [operations]
+      operationId: getOpenApiDocument
+      summary: This document
+      description: Swagger UI for it is served at `/docs`.
+      responses:
+        "200":
+          description: The OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/v1/sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List sessions
+      parameters:
+        - name: status
+          in: query
+          description: Only sessions in this status. Without it, PENDING, READY and FAILED sessions are listed.
+          schema:
+            $ref: "#/components/schemas/SessionStatus"
+      responses:
+        "200":
+          description: Matching sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Request devices
+      description: |
+        Returns `READY` when at least one matching device could be allocated immediately,
+        otherwise `PENDING` with a `queuePosition`. Poll with
+        `POST /api/v1/sessions/{id}/wait` until it is `READY`. When no registered device
+        can ever satisfy the request, the call fails with 503 instead of queueing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: The session was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Get a session
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [sessions]
+      operationId: releaseSession
+      summary: Release a session
+      description: Returns every lease to its provider. Releasing an already released session succeeds.
+      responses:
+        "200":
+          description: The session was released.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/sessions/{id}/wait:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: waitForSession
+      summary: Long-poll a queued session
+      description: |
+        Waits up to `timeoutSeconds` (at most 30) for the session to leave `PENDING`, and
+        refreshes its heartbeat. A `PENDING` session that nobody waits on for 90 seconds is
+        dropped from the queue.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WaitSessionRequest"
+      responses:
+        "200":
+          description: The session after the wait; still `PENDING` if the timeout elapsed first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/devices:
+    get:
+      tags: [devices]
+      operationId: listProviders
+      summary: Fleet inventory by provider
+      parameters:
+        - name: refresh
+          in: query
+          description: Poll every adapter now instead of answering from the background snapshot.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Every active provider with its pool, inventory and access descriptors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevicesResponse"
+  /api/v1/config:
+    get:
+      tags: [config]
+      operationId: getConfig
+      summary: Active configuration
+      description: Adapter secrets are replaced with `<redacted>`.
+      responses:
+        "200":
+          description: The active configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShepherdConfig"
+    put:
+      tags: [config]
+      operationId: updateConfig
+      summary: Replace the configuration
+      description: |
+        Writes `msh.yaml` and applies it. A provider secret sent back as `<redacted>` keeps
+        its stored value. Removing a provider that still holds leases fails with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShepherdConfig"
+      responses:
+        "200":
+          description: The configuration now in effect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShepherdConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/config/reload:
+    post:
+      tags: [config]
+      operationId: reloadConfig
+      summary: Re-read msh.yaml from disk
+      responses:
+        "200":
+          description: The configuration now in effect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShepherdConfig"
+components:
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: sess_a1b2c3d4
+  responses:
+    BadRequest:
+      description: The request is malformed or fails validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: The change conflicts with current state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: The request cannot be served, e.g. no registered device matches it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          examples: [released]
+    SessionStatus:
+      type: string
+      enum: [PENDING, READY, FAILED, RELEASED, EXPIRED]
+    AdbServer:
+      type: object
+      description: An adb server endpoint, e.g. `adb -H host -P port devices`.
+      required: [host, port]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+    CreateSessionRequest:
+      type: object
+      properties:
+        maxDevices:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Upper bound for parallelism, not a strict requirement.
+        api:
+          type: string
+          description: "API level selector: `34`, `>=34`, `<34`, `34+`, `33..35` or `33,34,35`. Omit for any level."
+          examples: [">=34"]
+        ttlSeconds:
+          type: integer
+          format: int64
+          minimum: 1
+          default: 3600
+        deviceType:
+          type: string
+          enum: [physical, emulator]
+          description: Omit to use every capable provider.
+        devices:
+          type: integer
+          deprecated: true
+          description: Legacy alias of `maxDevices`.
+        apiLevel:
+          type: string
+          deprecated: true
+          description: Legacy alias of `api`.
+    WaitSessionRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 30
+          default: 20
+    Session:
+      type: object
+      required: [id, status, requestedDevices, allocatedDevices, adbServers, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          examples: [sess_a1b2c3d4]
+        status:
+          $ref: "#/components/schemas/SessionStatus"
+        requestedDevices:
+          type: integer
+        allocatedDevices:
+          type: integer
+        api:
+          type: string
+        deviceType:
+          type: string
+        adbServers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdbServer"
+        queuePosition:
+          type: integer
+          description: 1-based position in the queue while `PENDING`.
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    PoolStatus:
+      type: object
+      required: [available, busy, total]
+      properties:
+        available:
+          type: integer
+        busy:
+          type: integer
+        total:
+          type: integer
+    DevicesResponse:
+      type: object
+      required: [providers, totalAvailable, totalBusy]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderStatus"
+        totalAvailable:
+          type: integer
+        totalBusy:
+          type: integer
+    ProviderStatus:
+      type: object
+      required: [name, adbHost, adbPort, access, capabilities, inventory, pool, status]
+      properties:
+        name:
+          type: string
+        adbHost:
+          type: string
+        adbPort:
+          type: integer
+        access:
+          $ref: "#/components/schemas/AdapterAccess"
+        capabilities:
+          $ref: "#/components/schemas/AdapterCapabilities"
+        inventory:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdapterDeviceProfile"
+        pool:
+          $ref: "#/components/schemas/PoolStatus"
+        status:
+          type: string
+          enum: [HEALTHY, UNREACHABLE]
+    AdapterAccess:
+      type: object
+      properties:
+        preferredConnectionId:
+          type: string
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdapterConnection"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    AdapterConnection:
+      type: object
+      required: [id, protocol, transport, host, port, exposure]
+      properties:
+        id:
+          type: string
+        protocol:
+          type: string
+          examples: [adb]
+        transport:
+          type: string
+          examples: [tcp]
+        host:
+          type: string
+        port:
+          type: integer
+        exposure:
+          type: string
+          examples: [direct-tcp]
+        auth:
+          $ref: "#/components/schemas/AdapterConnectionAuth"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    AdapterConnectionAuth:
+      type: object
+      properties:
+        type:
+          type: string
+          default: network
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    AdapterCapabilities:
+      type: object
+      properties:
+        allocationModes:
+          type: array
+          items:
+            type: string
+        supportedProtocols:
+          type: array
+          items:
+            type: string
+        supportedExposureModes:
+          type: array
+          items:
+            type: string
+        supportedDeviceTypes:
+          type: array
+          items:
+            type: string
+        supportedApiLevels:
+          type: array
+          items:
+            type: string
+        supportsSelectiveApiAllocation:
+          type: boolean
+        supportsTestAccessAdb:
+          type: boolean
+        supportsTestAccessGrpc:
+          type: boolean
+        supportsTestAccessConsole:
+          type: boolean
+        features:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    AdapterDeviceProfile:
+      type: object
+      required: [deviceType, count]
+      properties:
+        deviceType:
+          type: string
+        apiLevel:
+          type: string
+        manufacturer:
+          type: string
+        model:
+          type: string
+        abi:
+          type: string
+        count:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    LivenessResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          examples: [alive]
+        version:
+          type: string
+    ReadinessResponse:
+      type: object
+      required: [status, version, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not-ready]
+        version:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+    ProviderHealthSummary:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [HEALTHY, UNREACHABLE]
+        available:
+          type: integer
+        busy:
+          type: integer
+        total:
+          type: integer
+        error:
+          type: string
+    SessionCounts:
+      type: object
+      required: [pending, ready, allocatedDevices]
+      properties:
+        pending:
+          type: integer
+        ready:
+          type: integer
+        allocatedDevices:
+          type: integer
+    HealthResponse:
+      type: object
+      required: [status, version, providersTotal, providersHealthy, providers]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        providersTotal:
+          type: integer
+        providersHealthy:
+          type: integer
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderHealthSummary"
+        sessions:
+          $ref: "#/components/schemas/SessionCounts"
+        checkedAt:
+          type: string
+          format: date-time
+    ProviderConfig:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          description: Base URL of the adapter, e.g. `http://192.168.1.10:7037`.
+        accessHost:
+          type: string
+          description: Host published to test runners when it differs from the host in `url`.
+        secret:
+          type: string
+          description: Bearer token matching the adapter's `ADAPTER_SECRET`. Returned as `<redacted>`.
+    NoDeviceStrategyConfig:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [FAIL_IMMEDIATELY, WAIT_WITH_TIMEOUT]
+        waitTimeoutSeconds:
+          type: integer
+          format: int64
+    MonitoringConfig:
+      type: object
+      properties:
+        providerPollIntervalSeconds:
+          type: integer
+          format: int64
+          default: 10
+        providerPollTimeoutSeconds:
+          type: integer
+          format: int64
+          default: 5
+    AdapterTimeoutsConfig:
+      type: object
+      properties:
+        healthSeconds:
+          type: integer
+          format: int64
+          default: 5
+        statusSeconds:
+          type: integer
+          format: int64
+          default: 10
+        acquireSeconds:
+          type: integer
+          format: int64
+          default: 600
+        releaseSeconds:
+          type: integer
+          format: int64
+          default: 60
+    ShepherdConfig:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderConfig"
+        noDeviceStrategy:
+          $ref: "#/components/schemas/NoDeviceStrategyConfig"
+        monitoring:
+          $ref: "#/components/schemas/MonitoringConfig"
+        adapterTimeouts:
+          $ref: "#/components/schemas/AdapterTimeoutsConfig"

@@ -1,5 +1,6 @@
 package dev.shepherd.infra.state
 
+import dev.shepherd.domain.model.ActiveSessionCounts
 import dev.shepherd.domain.model.AdbServer
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionStatus
@@ -163,6 +164,38 @@ class StateStore(dbPath: String) {
                 (Sessions.status eq SessionStatus.PENDING.name) and
                     (Sessions.lastHeartbeatAt less staleBefore)
             }.map { row -> rowToSession(row) }
+        }
+    }
+
+    /** Queued and ready session counts plus the devices ready sessions hold, for health and metrics. */
+    suspend fun countActiveSessions(): ActiveSessionCounts = withContext(Dispatchers.IO) {
+        transaction {
+            val sessionCount = Sessions.id.count()
+            val allocatedSum = Sessions.allocatedDevices.sum()
+            val byStatus: Map<String, Pair<Long, Int>> = Sessions
+                .select(Sessions.status, sessionCount, allocatedSum)
+                .where {
+                    (Sessions.status eq SessionStatus.PENDING.name) or (Sessions.status eq SessionStatus.READY.name)
+                }
+                .groupBy(Sessions.status)
+                .associate { row -> row[Sessions.status] to (row[sessionCount] to (row[allocatedSum] ?: 0)) }
+            val ready = byStatus[SessionStatus.READY.name]
+            ActiveSessionCounts(
+                pending = byStatus[SessionStatus.PENDING.name]?.first?.toInt() ?: 0,
+                ready = ready?.first?.toInt() ?: 0,
+                allocatedDevices = ready?.second ?: 0
+            )
+        }
+    }
+
+    /** True when the database answers a trivial query; backs the readiness probe. */
+    suspend fun ping(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            transaction { exec("SELECT 1") }
+            true
+        } catch (error: Exception) {
+            logger.warn("Database ping failed: {}", error.message)
+            false
         }
     }
 

@@ -1,5 +1,7 @@
 package dev.shepherd.domain.provider
 
+import dev.shepherd.domain.metrics.ManagerMetrics
+import dev.shepherd.domain.model.AdapterTimeoutsConfig
 import dev.shepherd.domain.model.ProviderConfig
 import dev.shepherd.domain.model.ShepherdConfig
 import dev.shepherd.infra.config.ConfigStore
@@ -15,10 +17,18 @@ interface ProviderCatalog {
 class ProviderRegistry(
     private val configStore: ConfigStore,
     private val httpClient: HttpClient,
-    private val providerFactory: (ProviderConfig, HttpClient) -> DeviceProvider = ::createRemoteProvider
+    private val metrics: ManagerMetrics = ManagerMetrics.NONE,
+    providerFactory: ((ProviderConfig, HttpClient) -> DeviceProvider)? = null
 ) : ProviderCatalog {
     private val logger = LoggerFactory.getLogger(ProviderRegistry::class.java)
     private val lock = Any()
+
+    // Adapter timeouts are read per call, so a config reload applies to providers that
+    // were built before it.
+    private val providerFactory: (ProviderConfig, HttpClient) -> DeviceProvider = providerFactory
+        ?: { providerConfig, client ->
+            createRemoteProvider(providerConfig, client, metrics) { currentConfig().adapterTimeouts }
+        }
 
     private var activeConfig: ShepherdConfig = ShepherdConfig(providers = emptyList())
     private var activeProviders: List<DeviceProvider> = emptyList()
@@ -79,7 +89,12 @@ class ProviderRegistry(
     }
 }
 
-private fun createRemoteProvider(providerConfig: ProviderConfig, httpClient: HttpClient): DeviceProvider {
+private fun createRemoteProvider(
+    providerConfig: ProviderConfig,
+    httpClient: HttpClient,
+    metrics: ManagerMetrics,
+    timeouts: () -> AdapterTimeoutsConfig
+): DeviceProvider {
     val logger = LoggerFactory.getLogger("dev.shepherd.ProviderFactory")
     if (providerConfig.secret.isBlank()) {
         logger.warn("Provider '${providerConfig.name}' has no secret and will be contacted without authentication")
@@ -89,6 +104,8 @@ private fun createRemoteProvider(providerConfig: ProviderConfig, httpClient: Htt
         adapterUrl = providerConfig.url,
         accessHost = providerConfig.accessHost?.trim().orEmpty().ifBlank { Url(providerConfig.url).host },
         secret = providerConfig.secret,
-        httpClient = httpClient
+        httpClient = httpClient,
+        metrics = metrics,
+        timeouts = timeouts
     )
 }

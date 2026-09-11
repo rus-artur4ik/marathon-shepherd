@@ -1,0 +1,42 @@
+# Marathon Shepherd — example Prometheus scrape configuration.
+#
+# Copy the two jobs below into the `scrape_configs:` list of your own
+# prometheus.yml and replace the example hostnames with your real manager
+# and adapter hosts.
+#
+# SECURITY: /metrics on both the manager (:6037) and each adapter (:7037) is
+# unauthenticated — it does not require the adapter `secret` configured in
+# msh.yaml, and there is no bearer token or mTLS in front of it. Only scrape
+# it from a Prometheus (or Alloy/Grafana Agent) that lives on the same
+# private network as the fleet. Do not expose these ports, or just the
+# /metrics path, to the public internet or to any untrusted network; if
+# Prometheus must reach across a network boundary, put /metrics behind a
+# VPN, private peering link, or an authenticating reverse proxy instead of
+# publishing it directly.
+
+scrape_configs:
+  # The manager schedules sessions across adapters and exposes fleet, session,
+  # and manager->adapter call metrics on :6037. See ShepherdManagerDown in
+  # alerts.yml, which keys off up{job="marathon-shepherd-manager"} — keep the
+  # job_name below in sync with that rule if you rename it.
+  - job_name: marathon-shepherd-manager
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - manager.example.internal:6037
+
+  # Each adapter exposes its own device-pool metrics (acquire/release/pool
+  # state) on :7037. Static targets are shown here for illustration; in a
+  # fleet whose provider list changes often, generate this list from the
+  # same providers as msh.yaml instead (e.g. file_sd_configs), rather than
+  # hand-maintaining it in two places. See ShepherdAdapterScrapeDown in
+  # alerts.yml, which keys off up{job="marathon-shepherd-adapters"} — keep
+  # the job_name below in sync with that rule if you rename it.
+  - job_name: marathon-shepherd-adapters
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rack-1.example.internal:7037
+          - emu-farm-1.example.internal:7037

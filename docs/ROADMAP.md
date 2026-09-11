@@ -30,17 +30,17 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 1 — Observability
 
-- [ ] `/metrics` (Prometheus) on the manager: HTTP, JVM and domain metrics
-- [ ] Domain metrics: sessions by status, queue depth, queue wait histogram,
+- [x] `/metrics` (Prometheus) on the manager: HTTP, JVM and domain metrics
+- [x] Domain metrics: sessions by status, queue depth, queue wait histogram,
       allocation outcomes, devices per provider and state, provider up/down,
       adapter call latency, build info
-- [ ] Background provider poller; `/health` and `/api/v1/devices` read a snapshot
+- [x] Background provider poller; `/health` and `/api/v1/devices` read a snapshot
       instead of fanning out to every adapter per request
-- [ ] `/ready` probe (database + config); `/live` unchanged
-- [ ] `/metrics` on every adapter through the shared adapter runtime
-- [ ] OpenAPI spec at `/openapi.yaml`, Swagger UI at `/docs`, and a test that keeps
+- [x] `/ready` probe (database + config); `/live` unchanged
+- [x] `/metrics` on every adapter through the shared adapter runtime
+- [x] OpenAPI spec at `/openapi.yaml`, Swagger UI at `/docs`, and a test that keeps
       routes and spec in sync
-- [ ] Grafana dashboard and Prometheus alert rules in `deploy/observability`
+- [x] Grafana dashboard and Prometheus alert rules in `deploy/observability`
 
 ## Phase 2 — Identity and multi-client access
 
