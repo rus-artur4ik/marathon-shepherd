@@ -67,6 +67,16 @@ private def runWithShepherd(Map params) {
     if (deviceType != null) {
         createPayload.deviceType = deviceType
     }
+    // Name the session after the build so the manager's session list, device view and audit
+    // log say which job holds which device.
+    String sessionName = buildSessionName()
+    if (sessionName != null) {
+        createPayload.name = sessionName
+    }
+    String buildUrl = normalizeOptionalText(env.BUILD_URL)
+    if (buildUrl != null) {
+        createPayload.metadata = [buildUrl: buildUrl]
+    }
 
     Exception taskError = null
     Exception releaseError = null
@@ -529,6 +539,16 @@ private List<Map<String, Object>> parseAdbServers(Object rawAdbServers) {
     }.findAll { item ->
         item.host != null && item.port != null
     }
+}
+
+private String buildSessionName() {
+    String job = normalizeOptionalText(env.JOB_NAME)
+    if (job == null) {
+        return null
+    }
+    String build = normalizeOptionalText(env.BUILD_NUMBER)
+    String name = build == null ? job : "${job} #${build}".toString()
+    return name.take(200)
 }
 
 private String normalizeManagerUrl(String managerUrl) {

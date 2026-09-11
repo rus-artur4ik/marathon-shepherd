@@ -353,6 +353,28 @@ check("credentialsId binds the key as MSH_TOKEN for the whole run") {
     assert sh.anyScriptContains("DELETE"), "session must still be released inside the credentials scope"
 }
 
+check("sessions are named after the build and carry its URL") {
+    MockSh sh = happySh()
+    def script = load(sh)
+    (script.binding.getVariable("env") as Map).putAll([
+        JOB_NAME: "app/main",
+        BUILD_NUMBER: "42",
+        BUILD_URL: "https://ci.example/job/app/job/main/42/",
+    ])
+    script.call([maxDevices: 1])
+    String createScript = sh.lastCallWithLabel("Shepherd / Queue Session").script as String
+    assert createScript.contains('"name":"app/main #42"'), "missing session name"
+    assert createScript.contains('"buildUrl":"https://ci.example/job/app/job/main/42/"'), "missing build URL"
+}
+
+check("outside a build the session has no name") {
+    MockSh sh = happySh()
+    load(sh).call([maxDevices: 1])
+    String createScript = sh.lastCallWithLabel("Shepherd / Queue Session").script as String
+    assert !createScript.contains('"name"')
+    assert !createScript.contains('"metadata"')
+}
+
 System.out.println()
 System.out.println("=".multiply(68))
 if (failed == 0) {

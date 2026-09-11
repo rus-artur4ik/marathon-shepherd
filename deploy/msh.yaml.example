@@ -1,7 +1,12 @@
+# Marathon Shepherd manager configuration (msh.yaml).
+#
+# Only `providers` is needed; every other section is optional and shows its defaults.
+# Changes apply on `POST /api/v1/config/reload` or `PUT /api/v1/config` (admin keys).
+
 providers:
   # Physical device rack running shepherd-adb (module: adapter/shepherd-adb)
   # secret must match ADAPTER_SECRET on that host
-  - name: "device-rack-1"
+  - name: "device-rack-1"          # letters, digits, '.', '_', '-'; device ids become device-rack-1:<serial>
     url: "http://192.168.50.100:7037"
     # accessHost defaults to the host part of `url`
     # accessHost: "192.168.50.100"
@@ -21,3 +26,44 @@ providers:
 
   # Local development only: blank secret disables adapter auth.
   # Do not use blank secrets in shared environments.
+
+# Adapters can also join by themselves instead of being listed above: create a client with
+# the `provider` role and set MSH_MANAGER_URL, MSH_REGISTRATION_TOKEN and ADAPTER_PUBLIC_URL
+# on the adapter. A registration stops receiving new sessions when its heartbeats stop.
+# registration:
+#   heartbeatIntervalSeconds: 30
+#   ttlSeconds: 90
+
+# Limits for API clients that do not set their own. Admin clients are exempt.
+# quotas:
+#   defaults:
+#     maxDevices: 8                    # devices held or waited for at once, across sessions
+#     maxSessionLifetimeSeconds: 14400 # longer TTLs are shortened, extensions stop here
+#     maxPriority: 0                   # highest session priority a client may ask for
+
+# Queue order for sessions waiting for devices: fifo (strict first come, first served)
+# or priority (higher session priority first, FIFO within a priority).
+# scheduler:
+#   policy: fifo
+
+# Background polling of adapters for /health, /api/v1/devices and metrics.
+# monitoring:
+#   providerPollIntervalSeconds: 10
+#   providerPollTimeoutSeconds: 5
+
+# Upper bounds for manager-to-adapter calls. Acquire is long because on-demand adapters
+# boot devices before they answer.
+# adapterTimeouts:
+#   healthSeconds: 5
+#   statusSeconds: 10
+#   acquireSeconds: 600
+#   releaseSeconds: 60
+
+# Release adapter leases that no session owns (left behind by failed releases). An orphan
+# is released on the second pass that sees it.
+# reconciliation:
+#   enabled: true
+#   intervalSeconds: 300
+
+# audit:
+#   retentionDays: 90

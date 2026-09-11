@@ -8,16 +8,23 @@ import dev.shepherd.api.configRoutes
 import dev.shepherd.api.configureApiAuth
 import dev.shepherd.api.deviceRoutes
 import dev.shepherd.api.docsRoutes
+import dev.shepherd.api.eventRoutes
 import dev.shepherd.api.healthRoutes
 import dev.shepherd.api.metricsRoutes
+import dev.shepherd.api.providerRoutes
 import dev.shepherd.api.respondError
 import dev.shepherd.api.sessionRoutes
 import dev.shepherd.domain.FleetMonitor
+import dev.shepherd.domain.LeaseReconciler
 import dev.shepherd.domain.SessionManager
+import dev.shepherd.domain.devices.DeviceCatalog
 import dev.shepherd.domain.errors.AccessDeniedException
 import dev.shepherd.domain.errors.ConflictException
 import dev.shepherd.domain.errors.QuotaExceededException
 import dev.shepherd.domain.errors.ResourceNotFoundException
+import dev.shepherd.domain.events.EventBus
+import dev.shepherd.domain.model.SessionStatus
+import dev.shepherd.domain.provider.ProviderRegistrationService
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.infra.audit.StoreAuditTrail
@@ -25,7 +32,9 @@ import dev.shepherd.infra.auth.AccessControl
 import dev.shepherd.infra.auth.ClientStore
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.db.ShepherdDatabase
+import dev.shepherd.infra.devices.MaintenanceStore
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
+import dev.shepherd.infra.providers.RegistrationStore
 import dev.shepherd.infra.state.StateStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -93,6 +102,8 @@ fun main(args: Array<String>) {
     val auditStore = AuditStore(database)
     val audit = StoreAuditTrail(auditStore)
     val metrics = MicrometerManagerMetrics()
+    val eventBus = EventBus()
+    val maintenanceStore = MaintenanceStore(database)
 
     val httpClient = HttpClient(CIO) {
         install(ClientContentNegotiation) {
@@ -114,12 +125,46 @@ fun main(args: Array<String>) {
     val initialTokenFile = File(dataDir, INITIAL_ADMIN_TOKEN_FILE)
     runBlocking { accessControl.bootstrap(initialTokenFile) }
         ?.let { key -> announceInitialAdminKey(key, initialTokenFile, port) }
-    val sessionManager = SessionManager(providerRegistry, stateStore, configStore, metrics, audit)
+    val sessionManager = SessionManager(
+        providerCatalog = providerRegistry,
+        stateStore = stateStore,
+        configStore = configStore,
+        metrics = metrics,
+        audit = audit,
+        events = eventBus,
+        maintenanceDeviceIds = { maintenanceStore.all().keys },
+        queuePolicy = { providerRegistry.currentConfig().scheduler.policy }
+    )
     val fleetMonitor = FleetMonitor(
         providerCatalog = providerRegistry,
         sessionCounts = { stateStore.countActiveSessions() },
         metrics = metrics,
-        pollTimeout = { Duration.ofSeconds(providerRegistry.currentConfig().monitoring.providerPollTimeoutSeconds) }
+        pollTimeout = { Duration.ofSeconds(providerRegistry.currentConfig().monitoring.providerPollTimeoutSeconds) },
+        events = eventBus
+    )
+    val deviceCatalog = DeviceCatalog(
+        fleetMonitor = fleetMonitor,
+        readySessions = { stateStore.listSessions(SessionStatus.READY) },
+        maintenance = maintenanceStore,
+        audit = audit,
+        events = eventBus
+    )
+    val registrations = ProviderRegistrationService(
+        registry = providerRegistry,
+        repository = RegistrationStore(database),
+        hasActiveLeases = { name -> stateStore.hasActiveLeasesForProvider(name) },
+        audit = audit,
+        events = eventBus
+    )
+    runBlocking { registrations.restore() }.takeIf { restored -> restored > 0 }?.let { restored ->
+        logger.info("Restored {} self-registered provider(s); each becomes active again on its next heartbeat", restored)
+    }
+    val leaseReconciler = LeaseReconciler(
+        providerCatalog = providerRegistry,
+        knownLeaseIds = { provider -> stateStore.activeLeaseIds(provider) },
+        metrics = metrics,
+        audit = audit,
+        events = eventBus
     )
     val services = ManagerServices(
         providerRegistry = providerRegistry,
@@ -129,6 +174,9 @@ fun main(args: Array<String>) {
         accessControl = accessControl,
         auditStore = auditStore,
         audit = audit,
+        eventBus = eventBus,
+        deviceCatalog = deviceCatalog,
+        registrations = registrations,
         metrics = metrics
     )
 
@@ -151,6 +199,11 @@ fun main(args: Array<String>) {
     fleetMonitor.start(backgroundScope) {
         Duration.ofSeconds(providerRegistry.currentConfig().monitoring.providerPollIntervalSeconds)
     }
+    leaseReconciler.start(
+        scope = backgroundScope,
+        enabled = { providerRegistry.currentConfig().reconciliation.enabled },
+        interval = { Duration.ofSeconds(providerRegistry.currentConfig().reconciliation.intervalSeconds) }
+    )
 
     logger.info("Starting Marathon Shepherd on port $port")
     logger.info("Config: $configPath, providers: ${providerRegistry.activeProviders().size}")
@@ -286,7 +339,9 @@ fun Application.configureServer(services: ManagerServices) {
         docsRoutes()
         authenticate(API_AUTH) {
             sessionRoutes(services.sessionManager)
-            deviceRoutes(services.fleetMonitor, services::snapshotMaxAge)
+            deviceRoutes(services.fleetMonitor, services.deviceCatalog, services::snapshotMaxAge)
+            providerRoutes(services.providerRegistry, services.registrations, services.fleetMonitor, services::snapshotMaxAge)
+            eventRoutes(services.eventBus, services.metrics)
             configRoutes(services.providerRegistry, services.sessionManager, services.audit)
             adminRoutes(services.accessControl, services.sessionManager)
             accountRoutes(services.sessionManager, services.auditStore)

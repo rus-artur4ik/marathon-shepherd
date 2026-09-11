@@ -1,7 +1,12 @@
 package dev.shepherd.domain.allocation
 
+import dev.shepherd.adapter.api.AdapterDevice
+import dev.shepherd.adapter.api.DEVICE_STATE_AVAILABLE
+import dev.shepherd.adapter.api.DEVICE_STATE_OFFLINE
+import dev.shepherd.adapter.api.FEATURE_DEVICE_SELECTION
 import dev.shepherd.domain.model.AnyLevel
 import dev.shepherd.domain.model.ApiSelector
+import dev.shepherd.domain.model.DeviceIds
 import dev.shepherd.domain.provider.DeviceProvider
 
 /**
@@ -22,10 +27,48 @@ object ProviderMatcher {
      * create one on demand. Used to distinguish "busy, so queue" from "impossible, so fail".
      */
     fun hasRegisteredMatchingDevices(providers: List<DeviceProvider>, deviceType: String?, apiSelector: ApiSelector): Boolean =
+        hasRegisteredMatchingDevices(providers, DeviceRequest(deviceType, apiSelector), excluded = emptySet())
+
+    /**
+     * True when some provider could serve [request] now or once busy devices free up.
+     *
+     * A provider that lists individual devices is judged by that list: busy devices count,
+     * because the session can queue for them, while offline devices and devices in
+     * [excluded] (maintenance) do not. Only such providers can serve a targeted request.
+     */
+    fun hasRegisteredMatchingDevices(providers: List<DeviceProvider>, request: DeviceRequest, excluded: Set<String>): Boolean =
         providers.any { provider ->
-            matchingRegisteredDevices(provider, deviceType, apiSelector) > 0 ||
-                canAllocateOnDemand(provider, deviceType, apiSelector)
+            if (selectsDevices(provider)) {
+                registeredDevices(provider, request, excluded).isNotEmpty()
+            } else {
+                !request.isTargeted && (
+                    matchingRegisteredDevices(provider, request.deviceType, request.apiSelector) > 0 ||
+                        canAllocateOnDemand(provider, request.deviceType, request.apiSelector)
+                    )
+            }
         }
+
+    /** True when [provider] lists its devices and lets the manager pick among them. */
+    fun selectsDevices(provider: DeviceProvider): Boolean =
+        provider.devices.isNotEmpty() && provider.supportsFeature(FEATURE_DEVICE_SELECTION)
+
+    fun deviceMatches(providerName: String, device: AdapterDevice, request: DeviceRequest): Boolean =
+        (request.deviceType == null || device.deviceType == request.deviceType) &&
+            request.apiSelector.matches(device.apiLevel) &&
+            request.labels.all { (key, value) -> device.labels[key] == value } &&
+            (request.deviceIds.isEmpty() || DeviceIds.global(providerName, device.id) in request.deviceIds)
+
+    /** Devices of [provider] that could ever serve [request]: busy ones included, offline and excluded ones not. */
+    fun registeredDevices(provider: DeviceProvider, request: DeviceRequest, excluded: Set<String>): List<AdapterDevice> =
+        provider.devices.filter { device ->
+            device.state != DEVICE_STATE_OFFLINE &&
+                DeviceIds.global(provider.name, device.id) !in excluded &&
+                deviceMatches(provider.name, device, request)
+        }
+
+    /** Devices of [provider] that [request] may receive right now. */
+    fun availableDevices(provider: DeviceProvider, request: DeviceRequest, excluded: Set<String>): List<AdapterDevice> =
+        registeredDevices(provider, request, excluded).filter { device -> device.state == DEVICE_STATE_AVAILABLE }
 
     /** How many devices in [provider]'s current inventory satisfy the request. */
     fun matchingRegisteredDevices(provider: DeviceProvider, deviceType: String?, apiSelector: ApiSelector): Int {

@@ -2,6 +2,8 @@ package dev.shepherd.infra.db
 
 import dev.shepherd.infra.audit.AuditLog
 import dev.shepherd.infra.auth.Clients
+import dev.shepherd.infra.devices.DeviceMaintenance
+import dev.shepherd.infra.providers.RegisteredProviders
 import dev.shepherd.infra.state.SessionLeases
 import dev.shepherd.infra.state.Sessions
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +32,7 @@ class ShepherdDatabase private constructor(
     private fun createSchema() {
         transaction(database) {
             @Suppress("DEPRECATION")
-            SchemaUtils.createMissingTablesAndColumns(Sessions, SessionLeases, Clients, AuditLog)
+            SchemaUtils.createMissingTablesAndColumns(Sessions, SessionLeases, Clients, AuditLog, DeviceMaintenance, RegisteredProviders)
         }
     }
 

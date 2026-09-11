@@ -29,7 +29,8 @@ fun main() {
     }
     val handler = AdbAdapterHandler(
         adbService = adbService,
-        leaseManager = leaseManager
+        leaseManager = leaseManager,
+        labels = AdbDeviceLabels.fromEnvironment()
     )
     val adminService = AdbAdminService(adbService = adbService, leaseManager = leaseManager)
     startAdbAdapterServer(handler = handler, env = env, adminService = adminService)

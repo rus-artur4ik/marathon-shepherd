@@ -3,7 +3,9 @@ package dev.shepherd.infra.state
 import dev.shepherd.domain.model.ActiveSessionCounts
 import dev.shepherd.domain.model.AdbServer
 import dev.shepherd.domain.model.OwnerUsage
+import dev.shepherd.domain.model.QueuePolicy
 import dev.shepherd.domain.model.Session
+import dev.shepherd.domain.model.SessionDevice
 import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.infra.db.ShepherdDatabase
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,13 @@ object Sessions : Table("sessions") {
     val releasedAt = timestamp("released_at").nullable()
     val ownerId = varchar("owner_id", 64).nullable()
     val ownerName = varchar("owner_name", 128).nullable()
+    val name = varchar("name", 200).nullable()
+    val metadataJson = text("metadata_json").nullable()
+    val priority = integer("priority").default(0)
+    val idleTimeoutSeconds = long("idle_timeout_seconds").nullable()
+    val labelsJson = text("labels_json").nullable()
+    val deviceIdsJson = text("device_ids_json").nullable()
+    val devicesJson = text("devices_json").nullable()
 
     override val primaryKey = PrimaryKey(id)
 }
@@ -70,6 +79,7 @@ class StateStore(val db: ShepherdDatabase) {
                 it[releasedAt] = session.releasedAt
                 it[ownerId] = session.ownerId
                 it[ownerName] = session.ownerName
+                writeExtendedFields(it, session)
             }
         }
     }
@@ -110,8 +120,20 @@ class StateStore(val db: ShepherdDatabase) {
                 it[expiresAt] = session.expiresAt
                 it[lastHeartbeatAt] = session.lastHeartbeatAt
                 it[releasedAt] = session.releasedAt
+                writeExtendedFields(it, session)
             }
         }
+    }
+
+    /** Session columns added after 0.1.0, written the same way on insert and update. */
+    private fun writeExtendedFields(statement: org.jetbrains.exposed.sql.statements.UpdateBuilder<*>, session: Session) {
+        statement[Sessions.name] = session.name
+        statement[Sessions.metadataJson] = session.metadata.takeIf { it.isNotEmpty() }?.let { json.encodeToString(it) }
+        statement[Sessions.priority] = session.priority
+        statement[Sessions.idleTimeoutSeconds] = session.idleTimeoutSeconds
+        statement[Sessions.labelsJson] = session.labels.takeIf { it.isNotEmpty() }?.let { json.encodeToString(it) }
+        statement[Sessions.deviceIdsJson] = session.deviceIds.takeIf { it.isNotEmpty() }?.let { json.encodeToString(it) }
+        statement[Sessions.devicesJson] = session.devices.takeIf { it.isNotEmpty() }?.let { json.encodeToString(it) }
     }
 
     suspend fun listSessions(statusFilter: SessionStatus? = null, ownerId: String? = null): List<Session> = withContext(Dispatchers.IO) {
@@ -162,12 +184,46 @@ class StateStore(val db: ShepherdDatabase) {
         }
     }
 
-    suspend fun listPendingSessions(): List<Session> = withContext(Dispatchers.IO) {
+    /** The queue, head first, in the order [policy] defines. */
+    suspend fun listPendingSessions(policy: QueuePolicy = QueuePolicy.FIFO): List<Session> = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            val query = Sessions.selectAll().where { Sessions.status eq SessionStatus.PENDING.name }
+            val ordered = when (policy) {
+                QueuePolicy.FIFO -> query.orderBy(Sessions.createdAt to SortOrder.ASC, Sessions.id to SortOrder.ASC)
+                QueuePolicy.PRIORITY -> query.orderBy(
+                    Sessions.priority to SortOrder.DESC,
+                    Sessions.createdAt to SortOrder.ASC,
+                    Sessions.id to SortOrder.ASC
+                )
+            }
+            ordered.map { row -> rowToSession(row) }
+        }
+    }
+
+    /** READY sessions that asked to be released when idle. */
+    suspend fun listIdleCandidates(): List<Session> = withContext(Dispatchers.IO) {
         transaction(db.database) {
             Sessions.selectAll()
-                .where { Sessions.status eq SessionStatus.PENDING.name }
-                .orderBy(Sessions.createdAt to SortOrder.ASC, Sessions.id to SortOrder.ASC)
+                .where { (Sessions.status eq SessionStatus.READY.name) and Sessions.idleTimeoutSeconds.isNotNull() }
                 .map { row -> rowToSession(row) }
+        }
+    }
+
+    suspend fun updateSessionExpiry(sessionId: String, expiresAt: Instant) = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            Sessions.update({ Sessions.id eq sessionId }) {
+                it[Sessions.expiresAt] = expiresAt
+            }
+        }
+    }
+
+    /** Lease ids a provider holds for sessions that are still queued or ready. */
+    suspend fun activeLeaseIds(providerName: String): Set<String> = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            SessionLeases.innerJoin(Sessions).selectAll().where {
+                (SessionLeases.providerName eq providerName) and
+                    ((Sessions.status eq SessionStatus.READY.name) or (Sessions.status eq SessionStatus.PENDING.name))
+            }.map { row -> row[SessionLeases.leaseId] }.toSet()
         }
     }
 
@@ -278,7 +334,14 @@ class StateStore(val db: ShepherdDatabase) {
             lastHeartbeatAt = row[Sessions.lastHeartbeatAt],
             releasedAt = row[Sessions.releasedAt],
             ownerId = row[Sessions.ownerId],
-            ownerName = row[Sessions.ownerName]
+            ownerName = row[Sessions.ownerName],
+            name = row[Sessions.name],
+            metadata = row[Sessions.metadataJson]?.let { text -> json.decodeFromString<Map<String, String>>(text) } ?: emptyMap(),
+            priority = row[Sessions.priority],
+            idleTimeoutSeconds = row[Sessions.idleTimeoutSeconds],
+            labels = row[Sessions.labelsJson]?.let { text -> json.decodeFromString<Map<String, String>>(text) } ?: emptyMap(),
+            deviceIds = row[Sessions.deviceIdsJson]?.let { text -> json.decodeFromString<List<String>>(text) } ?: emptyList(),
+            devices = row[Sessions.devicesJson]?.let { text -> json.decodeFromString<List<SessionDevice>>(text) } ?: emptyList()
         )
     }
 }

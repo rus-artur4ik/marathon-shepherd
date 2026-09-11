@@ -14,6 +14,23 @@ import dev.shepherd.domain.provider.DeviceProvider
  */
 object NoMatchingDevicesReport {
 
+    fun render(providers: List<DeviceProvider>, request: DeviceRequest): String {
+        val report = render(providers, request.deviceType, request.apiSelector)
+        if (!request.isTargeted) {
+            return report
+        }
+        val constraints = buildList {
+            if (request.labels.isNotEmpty()) {
+                add("labels " + request.labels.entries.joinToString(",") { (key, value) -> "$key=$value" })
+            }
+            if (request.deviceIds.isNotEmpty()) {
+                add("device ids " + request.deviceIds.sorted().joinToString(","))
+            }
+        }
+        return report + "\nThe request also requires ${constraints.joinToString(" and ")}. Only providers that list " +
+            "individual devices can serve that, and none has a matching device that is online and not in maintenance."
+    }
+
     fun render(providers: List<DeviceProvider>, deviceType: String?, apiSelector: ApiSelector): String {
         val report = StringBuilder("No registered devices match the request${describeRequest(deviceType, apiSelector)}")
 

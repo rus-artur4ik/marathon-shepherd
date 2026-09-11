@@ -44,7 +44,8 @@ fun Route.adbReloadRoutes(handler: AdapterHandler, env: AdapterEnv, adminService
                             access = result.access ?: handler.defaultAccess(env, requestHost),
                             inventory = result.inventory,
                             capabilities = handler.capabilities(env),
-                            metadata = result.metadata + mapOf("adbReload" to "ok")
+                            metadata = result.metadata + mapOf("adbReload" to "ok"),
+                            devices = result.devices
                         )
                     )
                 }

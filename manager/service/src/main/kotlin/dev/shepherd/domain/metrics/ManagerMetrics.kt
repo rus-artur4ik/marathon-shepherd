@@ -31,6 +31,12 @@ interface ManagerMetrics {
     /** The fleet monitor finished a poll. */
     fun fleetObserved(snapshot: FleetSnapshot) {}
 
+    /** An adapter lease that no session owned was released by reconciliation. */
+    fun leaseReclaimed(provider: String) {}
+
+    /** Clients currently connected to the event stream. */
+    fun eventSubscribers(count: Int) {}
+
     companion object {
         /** Discards everything. */
         val NONE: ManagerMetrics = object : ManagerMetrics {}

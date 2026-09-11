@@ -33,7 +33,7 @@ class CloudOrchestratorService(
     @Volatile
     private var apiMode: CloudOrchestratorApiMode? = null
 
-    suspend fun createInstances(count: Int, apiLevel: String, ttlSeconds: Long): CloudOrchestratorAcquireResult =
+    suspend fun createInstances(count: Int, apiLevel: String, ttlSeconds: Long, sessionId: String? = null): CloudOrchestratorAcquireResult =
         withContext(Dispatchers.IO) {
             val normalizedCount: Int = count.coerceAtLeast(0)
             if (normalizedCount == 0) {
@@ -58,13 +58,14 @@ class CloudOrchestratorService(
             val mode: CloudOrchestratorApiMode = resolveApiMode()
                 ?: return@withContext CloudOrchestratorAcquireResult(leaseId = null, acquiredCount = 0, group = "")
             logger.info(
-                "Requesting {} Cuttlefish instance(s) via {} at api={} target={} ttl={}s lease={}",
+                "Requesting {} Cuttlefish instance(s) via {} at api={} target={} ttl={}s lease={} session={}",
                 normalizedCount,
                 mode,
                 apiLevel,
                 mapApiLevelToTarget(apiLevel),
                 ttlSeconds,
-                leaseId
+                leaseId,
+                sessionId ?: "-"
             )
             val responseText: String
             val releasePath: String
@@ -110,7 +111,8 @@ class CloudOrchestratorService(
             activeLeases[leaseId] = CloudOrchestratorLease(
                 group = group,
                 count = normalizedCount,
-                releasePath = if (releasePath.isBlank()) "" else releasePath.replace("__PENDING__", group)
+                releasePath = if (releasePath.isBlank()) "" else releasePath.replace("__PENDING__", group),
+                sessionId = sessionId
             )
             persistActiveLeases()
             logger.info(
@@ -146,19 +148,36 @@ class CloudOrchestratorService(
         true
     }
 
-    suspend fun listRunningInstances(): Int = withContext(Dispatchers.IO) {
-        when (resolveApiMode()) {
-            CloudOrchestratorApiMode.LEGACY_HOST_API -> listLegacyRunningDevices().size
-            CloudOrchestratorApiMode.CLOUD_V1 -> listCloudRunningDevices().size
-            null -> 0
+    /**
+     * Running instances with the group each belongs to, from a single orchestrator listing, so a
+     * caller that needs both counts and details gets them from one round of requests.
+     */
+    suspend fun runningInstances(): List<CuttlefishInstance> = withContext(Dispatchers.IO) {
+        val devices: List<CloudOrchestratorDevice> = when (resolveApiMode()) {
+            CloudOrchestratorApiMode.LEGACY_HOST_API -> listLegacyRunningDevices()
+            CloudOrchestratorApiMode.CLOUD_V1 -> listCloudRunningDevices()
+            null -> emptyList()
+        }
+        devices.map { device ->
+            CuttlefishInstance(
+                name = device.name,
+                group = listOfNotNull(device.group, device.groupName).firstOrNull { group -> group.isNotBlank() }
+            )
         }
     }
+
+    suspend fun listRunningInstances(): Int = runningInstances().size
 
     suspend fun isHealthy(): Boolean = withContext(Dispatchers.IO) {
         resolveApiMode() != null
     }
 
     fun activeLeaseCount(): Int = activeLeases.values.sumOf { lease -> lease.count }
+
+    /** A copy of the active leases by lease id. */
+    fun leaseSnapshot(): Map<String, CloudOrchestratorLease> = activeLeases.toMap()
+
+    fun hasLease(leaseId: String): Boolean = activeLeases.containsKey(leaseId)
 
     fun supportedApiLevels(): List<String> = supportedApiLevels
 
@@ -490,11 +509,16 @@ class CloudOrchestratorService(
 data class CloudOrchestratorLease(
     val group: String,
     val count: Int,
-    val releasePath: String = ""
+    val releasePath: String = "",
+    /** The manager session the lease was acquired for, when the manager said; for logs and lease listings. */
+    val sessionId: String? = null
 )
 
 /** Outcome of an acquire attempt; [leaseId] is null exactly when [acquiredCount] is zero. */
 data class CloudOrchestratorAcquireResult(val leaseId: String?, val acquiredCount: Int, val group: String)
+
+/** A running Cuttlefish instance; [group] is the orchestrator group it belongs to, when the listing says. */
+data class CuttlefishInstance(val name: String, val group: String?)
 
 private const val DEFAULT_CLOUD_ZONE: String = "local"
 private const val CLOUD_HOST_READY_RETRIES: Int = 10

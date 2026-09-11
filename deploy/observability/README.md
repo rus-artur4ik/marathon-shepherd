@@ -101,6 +101,9 @@ This is the authoritative list of metric names the dashboard and alerts are buil
 | `msh_devices_allocated_total` | counter | — | |
 | `msh_provider_up` | gauge | `provider` | `0`/`1` |
 | `msh_provider_devices` | gauge | `provider`, `state="available"\|"busy"\|"total"` | |
+| `msh_devices` | gauge | `provider`, `state="available"\|"busy"\|"offline"`, `device_type` | Per-device state from adapters that list devices (shepherd-adb). |
+| `msh_leases_reclaimed_total` | counter | `provider` | Orphaned adapter leases released by reconciliation. |
+| `msh_events_subscribers` | gauge | | Clients connected to `GET /api/v1/events`. |
 | `msh_adapter_requests_seconds_{bucket,count,sum,max}` | histogram | `provider`, `operation="health"\|"status"\|"acquire"\|"release"`, `outcome="success"\|"unavailable"\|"http_error"\|"error"\|"timeout"\|"cancelled"` | Manager → adapter HTTP calls |
 | `msh_fleet_last_poll_seconds` | gauge | — | Unix time of the last completed fleet poll |
 | `ktor_http_server_requests_seconds_{bucket,count,sum,max}` | histogram | `method`, `route`, `status`, `throwable` | Manager's own HTTP server |

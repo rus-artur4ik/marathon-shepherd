@@ -13,7 +13,9 @@ data class AdapterStatus(
     val pool: AdapterPool,
     val access: AdapterAccess? = null,
     val inventory: List<AdapterDeviceProfile> = emptyList(),
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    /** One entry per device for adapters that can tell devices apart; pool-only adapters leave it empty. */
+    val devices: List<AdapterDevice> = emptyList()
 )
 
 /**
@@ -26,7 +28,9 @@ data class AcquireResult(
     val acquiredCount: Int,
     val access: AdapterAccess? = null,
     val inventory: List<AdapterDeviceProfile> = emptyList(),
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    /** The leased devices and the access connection reaching each, for adapters that know them at acquire time. */
+    val devices: List<AdapterLeasedDevice> = emptyList()
 )
 
 /**
@@ -43,6 +47,21 @@ abstract class AdapterHandler(val adapterType: String, val version: String = Bui
 
     /** Return true on success, false on failure. */
     abstract suspend fun release(leaseId: String): Boolean
+
+    /**
+     * Keeps [leaseId] for [ttlSeconds] from now.
+     *
+     * Null means this adapter cannot renew leases and the route answers 501, so adapters that do
+     * not declare [FEATURE_LEASE_RENEW] need no override. False means the lease is unknown: the
+     * devices behind it are gone, and the manager should stop relying on them.
+     */
+    open suspend fun renew(leaseId: String, ttlSeconds: Long): Boolean? = null
+
+    /**
+     * Every lease this adapter holds, so the manager can find leases it lost track of, e.g. after
+     * a restart. Null means this adapter cannot list them and the route answers 501.
+     */
+    open suspend fun leases(): List<AdapterLease>? = null
 
     open fun capabilities(env: AdapterEnv): AdapterCapabilities {
         return AdapterCapabilities(
@@ -61,7 +80,7 @@ abstract class AdapterHandler(val adapterType: String, val version: String = Bui
     open fun defaultAccess(env: AdapterEnv, requestHost: String): AdapterAccess = env.buildDefaultAccess(adapterType, requestHost)
 }
 
-/** Registers all four adapter endpoints. Call this once from [startAdapterServer]. */
+/** Registers all adapter endpoints. Call this once from [startAdapterServer]. */
 fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv, metrics: AdapterMetrics? = null) {
     get("/health") {
         call.respond(
@@ -86,7 +105,8 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv, metrics: Adapt
                     access = result.access ?: handler.defaultAccess(env, requestHost),
                     inventory = result.inventory,
                     capabilities = handler.capabilities(env),
-                    metadata = result.metadata
+                    metadata = result.metadata,
+                    devices = result.devices
                 )
             )
         }
@@ -121,7 +141,8 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv, metrics: Adapt
                     access = responseAccess,
                     inventory = result.inventory,
                     capabilities = handler.capabilities(env),
-                    metadata = result.metadata
+                    metadata = result.metadata,
+                    devices = result.devices
                 )
             )
         }
@@ -139,6 +160,37 @@ fun Route.adapterRoutes(handler: AdapterHandler, env: AdapterEnv, metrics: Adapt
                     HttpStatusCode.InternalServerError,
                     mapOf("error" to "Failed to release lease $leaseId")
                 )
+            }
+        }
+
+        post("/leases/{leaseId}/renew") {
+            val leaseId = call.parameters["leaseId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing leaseId"))
+            val request = call.receive<RenewLeaseRequest>()
+            if (request.ttlSeconds <= 0) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "ttlSeconds must be positive"))
+                return@post
+            }
+
+            when (handler.renew(leaseId, request.ttlSeconds)) {
+                true -> call.respond(HttpStatusCode.OK, mapOf("status" to "renewed"))
+                false -> call.respond(HttpStatusCode.NotFound, mapOf("error" to "Unknown lease $leaseId"))
+                null -> call.respond(
+                    HttpStatusCode.NotImplemented,
+                    mapOf("error" to "The ${handler.adapterType} adapter does not support lease renewal")
+                )
+            }
+        }
+
+        get("/leases") {
+            val leases: List<AdapterLease>? = handler.leases()
+            if (leases == null) {
+                call.respond(
+                    HttpStatusCode.NotImplemented,
+                    mapOf("error" to "The ${handler.adapterType} adapter does not support listing leases")
+                )
+            } else {
+                call.respond(LeasesResponse(leases = leases))
             }
         }
     }

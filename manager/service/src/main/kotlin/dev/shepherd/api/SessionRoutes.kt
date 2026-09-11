@@ -6,7 +6,9 @@ import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.auth.Actor
 import dev.shepherd.domain.errors.ResourceNotFoundException
 import dev.shepherd.domain.model.Session
+import dev.shepherd.domain.model.SessionOptions
 import dev.shepherd.protocol.CreateSessionRequest
+import dev.shepherd.protocol.ExtendSessionRequest
 import dev.shepherd.protocol.StatusResponse
 import dev.shepherd.protocol.WaitSessionRequest
 import io.ktor.http.HttpStatusCode
@@ -30,7 +32,15 @@ fun Route.sessionRoutes(sessionManager: SessionManager) {
                 api = request.resolvedApi(),
                 ttlSeconds = request.ttlSeconds,
                 deviceType = request.deviceType,
-                actor = actor
+                actor = actor,
+                options = SessionOptions(
+                    name = request.name,
+                    metadata = request.metadata,
+                    priority = request.priority,
+                    idleTimeoutSeconds = request.idleTimeoutSeconds,
+                    labels = request.labels,
+                    deviceIds = request.deviceIds
+                )
             )
             val queuePosition = sessionManager.getQueuePosition(session.id)
             call.respond(HttpStatusCode.Created, session.toResponse(queuePosition = queuePosition))
@@ -70,6 +80,19 @@ fun Route.sessionRoutes(sessionManager: SessionManager) {
             val session = sessionManager.waitForSession(id, request.timeoutSeconds, actor)
             val queuePosition = sessionManager.getQueuePosition(session.id)
             call.respond(session.toResponse(queuePosition = queuePosition))
+        }
+
+        post("/{id}/heartbeat") {
+            val actor: Actor = call.actor().requireRole(*HOLDER_ROLES)
+            val session = sessionManager.heartbeat(call.pathParameter("id"), actor)
+            call.respond(session.toResponse(queuePosition = sessionManager.getQueuePosition(session.id)))
+        }
+
+        post("/{id}/extend") {
+            val actor: Actor = call.actor().requireRole(*HOLDER_ROLES)
+            val request = call.receive<ExtendSessionRequest>()
+            val session = sessionManager.extendSession(call.pathParameter("id"), request.ttlSeconds, actor)
+            call.respond(session.toResponse(queuePosition = sessionManager.getQueuePosition(session.id)))
         }
 
         delete("/{id}") {

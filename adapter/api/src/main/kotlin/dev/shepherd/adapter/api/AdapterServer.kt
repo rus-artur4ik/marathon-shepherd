@@ -1,5 +1,6 @@
 package dev.shepherd.adapter.api
 
+import io.ktor.client.HttpClient
 import io.ktor.http.ContentType
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -14,6 +15,9 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.*
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
@@ -72,6 +76,9 @@ data class AdapterEnv(
  * Starts a Ktor/Netty adapter server with standard plugins.
  * Pass an [AdapterHandler] — routing is wired up once via [adapterRoutes]; adapter-specific
  * endpoints go in [extraRoutes].
+ *
+ * When the environment turns on self-registration (see [ManagerRegistrationConfig.fromEnvironment]),
+ * the adapter also registers with the manager and keeps heartbeating for as long as it runs.
  */
 fun startAdapterServer(handler: AdapterHandler, env: AdapterEnv, extraRoutes: Route.() -> Unit = {}) {
     val logger = LoggerFactory.getLogger("dev.shepherd.adapter.${handler.adapterType}")
@@ -80,9 +87,15 @@ fun startAdapterServer(handler: AdapterHandler, env: AdapterEnv, extraRoutes: Ro
             "advertising ${env.accessMode} adb access on request-derived host:${env.advertisedAdbPort}"
     )
     if (!env.authEnabled) logger.warn("ADAPTER_SECRET is not set — running WITHOUT authentication")
+    val registration: ManagerRegistrationConfig? = ManagerRegistrationConfig.fromEnvironment(handler.adapterType)
 
     embeddedServer(Netty, port = env.port) {
         configureAdapterApplication(handler, env, AdapterMetrics(handler.adapterType), extraRoutes)
+        if (registration != null) {
+            val httpClient: HttpClient = ManagerRegistration.defaultHttpClient()
+            runManagerRegistration(ManagerRegistration(registration, handler.adapterType, env.secret, httpClient))
+            monitor.subscribe(ApplicationStopped) { httpClient.close() }
+        }
     }.start(wait = true)
 }
 
@@ -98,13 +111,15 @@ fun Application.configureAdapterApplication(
             Json {
                 prettyPrint = true
                 encodeDefaults = true
+                // A newer manager may send fields this adapter does not know yet.
+                ignoreUnknownKeys = true
             }
         )
     }
     install(CallLogging) {
-        // The manager polls /health and /status every few seconds; acquire and release
-        // are what an operator reads the log for.
-        filter { call -> call.request.path() !in QUIET_PATHS }
+        // The manager polls /health, /status and /leases and renews leases every few seconds;
+        // acquire and release are what an operator reads the log for.
+        filter { call -> !isQuietPath(call.request.path()) }
     }
     install(MicrometerMetrics) {
         registry = metrics.registry
@@ -121,5 +136,19 @@ fun Application.configureAdapterApplication(
     }
 }
 
-private val QUIET_PATHS: Set<String> = setOf("/health", "/status", "/metrics")
+/**
+ * Runs [registration] for as long as the application lives.
+ *
+ * It starts on [ServerReady] rather than straight away: the manager calls `/status` right after
+ * accepting a registration, and that call should find the port already bound.
+ */
+internal fun Application.runManagerRegistration(registration: ManagerRegistration) {
+    val heartbeats: Job = launch(start = CoroutineStart.LAZY) { registration.run() }
+    monitor.subscribe(ServerReady) { heartbeats.start() }
+    monitor.subscribe(ApplicationStopping) { heartbeats.cancel() }
+}
+
+private fun isQuietPath(path: String): Boolean = path in QUIET_PATHS || (path.startsWith("/leases/") && path.endsWith("/renew"))
+
+private val QUIET_PATHS: Set<String> = setOf("/health", "/status", "/metrics", "/leases")
 private val PROMETHEUS_TEXT: ContentType = ContentType.parse("text/plain; version=0.0.4; charset=utf-8")

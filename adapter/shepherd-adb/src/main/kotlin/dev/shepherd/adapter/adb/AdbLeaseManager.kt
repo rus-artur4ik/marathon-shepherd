@@ -15,7 +15,9 @@ data class AdbLeaseAcquisition(
 data class AdbLeaseSnapshot(
     val availableDevices: List<AdbPhysicalDevice>,
     val busyDevices: List<AdbPhysicalDevice>,
-    val busySerialsByLease: Map<String, String>
+    val busySerialsByLease: Map<String, String>,
+    /** Every active lease, including those whose devices are no longer attached. */
+    val leases: List<AdbLease> = emptyList()
 )
 
 class AdbLeaseManager(
@@ -64,7 +66,7 @@ class AdbLeaseManager(
                     restoredDevices += leasedDevice.copy(proxyPort = restoredPort)
                 }
                 if (restoredDevices.isNotEmpty()) {
-                    restoredLeases[lease.leaseId] = AdbLease(leaseId = lease.leaseId, devices = restoredDevices)
+                    restoredLeases[lease.leaseId] = lease.copy(devices = restoredDevices)
                 }
             }
             activeLeases.clear()
@@ -81,18 +83,32 @@ class AdbLeaseManager(
             AdbLeaseSnapshot(
                 availableDevices = connectedDevices.filterNot { device -> device.serial in busyBySerial },
                 busyDevices = connectedDevices.filter { device -> device.serial in busyBySerial },
-                busySerialsByLease = busyBySerial
+                busySerialsByLease = busyBySerial,
+                leases = activeLeases.values.sortedBy { lease -> lease.leaseId }
             )
         }
     }
 
-    suspend fun acquireDevices(requestedCount: Int, apiLevel: String, connectedDevices: List<AdbPhysicalDevice>): AdbLeaseAcquisition =
-        mutex.withLock {
+    /**
+     * Leases up to [requestedCount] free devices on [apiLevel] that also pass [deviceFilter], which
+     * is how device selection narrows the choice. [sessionId] is kept with the lease for logs and
+     * lease listings.
+     */
+    suspend fun acquireDevices(
+        requestedCount: Int,
+        apiLevel: String,
+        connectedDevices: List<AdbPhysicalDevice>,
+        deviceFilter: (AdbPhysicalDevice) -> Boolean = { true },
+        sessionId: String? = null
+    ): AdbLeaseAcquisition {
+        return mutex.withLock {
             val busyBySerial: Map<String, String> = activeLeases.values
                 .flatMap { lease -> lease.devices.map { device -> device.serial to lease.leaseId } }
                 .toMap()
             val connectedSerials: Set<String> = connectedDevices.map { device -> device.serial }.toSet()
-            val matchingDevices: List<AdbPhysicalDevice> = connectedDevices.filter { device -> device.apiLevel == apiLevel }
+            val matchingDevices: List<AdbPhysicalDevice> = connectedDevices.filter { device ->
+                device.apiLevel == apiLevel && deviceFilter(device)
+            }
             val availableDevices: List<AdbPhysicalDevice> = matchingDevices.filterNot { device -> device.serial in busyBySerial }
             val selectedDevices: List<AdbPhysicalDevice> = availableDevices.take(requestedCount)
             val missingSerials: List<String> = activeLeases.values
@@ -146,8 +162,14 @@ class AdbLeaseManager(
                 )
             }
 
-            activeLeases[leaseId] = AdbLease(leaseId = leaseId, devices = leasedDevices)
+            activeLeases[leaseId] = AdbLease(leaseId = leaseId, devices = leasedDevices, sessionId = sessionId)
             persistLeases()
+            logger.info(
+                "Leased adb serials {} as {}{}",
+                leasedDevices.joinToString { device -> device.serial },
+                leaseId,
+                sessionId?.let { id -> " for session $id" }.orEmpty()
+            )
             val busyMatchingSerials: Map<String, String> = busyBySerial
                 .filterKeys { serial -> matchingDevices.any { device -> device.serial == serial } }
             if (busyMatchingSerials.isNotEmpty()) {
@@ -164,6 +186,7 @@ class AdbLeaseManager(
                 missingSerials = missingSerials
             )
         }
+    }
 
     suspend fun releaseLease(leaseId: String): Boolean {
         return mutex.withLock {
@@ -171,9 +194,10 @@ class AdbLeaseManager(
             proxyController.stopLease(leaseId)
             persistLeases()
             logger.info(
-                "Released adb lease {} for serials {}",
+                "Released adb lease {} for serials {}{}",
                 leaseId,
-                lease.devices.joinToString { device -> device.serial }
+                lease.devices.joinToString { device -> device.serial },
+                lease.sessionId?.let { id -> " (session $id)" }.orEmpty()
             )
             true
         }
@@ -185,10 +209,23 @@ class AdbLeaseManager(
         }
     }
 
+    /** Every active lease, sorted by id. */
+    suspend fun listActiveLeases(): List<AdbLease> {
+        return mutex.withLock {
+            activeLeases.values.sortedBy { lease -> lease.leaseId }
+        }
+    }
+
+    suspend fun hasLease(leaseId: String): Boolean {
+        return mutex.withLock {
+            leaseId in activeLeases
+        }
+    }
+
     fun buildLeaseAccess(adapterType: String, requestHost: String, leasedDevices: List<AdbLeasedDevice>): AdapterAccess {
         val connections: List<AdapterConnection> = leasedDevices.map { device ->
             AdapterConnection(
-                id = "$adapterType-${device.serial}",
+                id = leaseConnectionId(adapterType, device.serial),
                 protocol = ACCESS_PROTOCOL_ADB,
                 transport = ACCESS_TRANSPORT_TCP,
                 host = requestHost,
@@ -284,6 +321,9 @@ class AdbLeaseManager(
         persistentLeaseStore.saveLeases(activeLeases.toMap())
     }
 }
+
+/** Id of the access connection that reaches [serial] inside a lease; `/acquire` reports it per device. */
+fun leaseConnectionId(adapterType: String, serial: String): String = "$adapterType-$serial"
 
 private fun AdbPhysicalDevice.toProfileKey(): DeviceProfileKey {
     return DeviceProfileKey(

@@ -56,20 +56,22 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 3 — Device-level control plane
 
-- [ ] Adapter contract: per-device list in `/status`; `deviceIds`, `excludeDeviceIds`
+- [x] Adapter contract: per-device list in `/status`; `deviceIds`, `excludeDeviceIds`
       and `labels` in `/acquire`; leased device ids in the response; lease renew
-- [ ] shepherd-adb reports every device (including offline/unauthorized), honours
+- [x] shepherd-adb reports every device (including offline/unauthorized), honours
       device selection and serial labels; cuttlefish reports running instances
-- [ ] Manager device view: `GET /api/v1/devices` flat list, `GET /api/v1/devices/{id}`
-- [ ] Sessions record which devices they hold; responses list them
-- [ ] Maintenance mode for devices (admin), excluded from allocation
-- [ ] Session create accepts device ids, labels, name, metadata, priority and
+- [x] Manager device view: `GET /api/v1/devices` flat list, `GET /api/v1/devices/{id}`
+- [x] Sessions record which devices they hold; responses list them
+- [x] Maintenance mode for devices (admin), excluded from allocation
+- [x] Session create accepts device ids, labels, name, metadata, priority and
       idle timeout
-- [ ] `POST /sessions/{id}/heartbeat` and `/extend`; idle READY sessions are reclaimed
-- [ ] Adapter self-registration with heartbeat (`provider` role keys) alongside
+- [x] `POST /sessions/{id}/heartbeat` and `/extend`; idle READY sessions are reclaimed
+- [x] Adapter self-registration with heartbeat (`provider` role keys) alongside
       static `msh.yaml` providers; `GET/DELETE /api/v1/providers`
-- [ ] `GET /api/v1/events` server-sent event stream with `Last-Event-ID` replay
-- [ ] Scheduler policies: strict FIFO (default) and priority
+- [x] `GET /api/v1/events` server-sent event stream with `Last-Event-ID` replay
+- [x] Scheduler policies: strict FIFO (default) and priority
+- [x] Orphaned adapter leases reclaimed by a two-pass reconciliation (`lease-list` adapters)
+- [x] Fix: a physical rack with every device busy queued nothing and answered 503
 
 ## Phase 4 — Client layer
 

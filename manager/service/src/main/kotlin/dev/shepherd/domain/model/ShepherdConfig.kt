@@ -1,6 +1,7 @@
 package dev.shepherd.domain.model
 
 import dev.shepherd.domain.auth.ClientQuota
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -18,8 +19,60 @@ data class ShepherdConfig(
     /** Limits for API clients. */
     val quotas: QuotasConfig = QuotasConfig(),
     /** Audit log retention. */
-    val audit: AuditConfig = AuditConfig()
+    val audit: AuditConfig = AuditConfig(),
+    /** How queued sessions are ordered. */
+    val scheduler: SchedulerConfig = SchedulerConfig(),
+    /** Adapters that register themselves instead of being listed under [providers]. */
+    val registration: RegistrationConfig = RegistrationConfig(),
+    /** Periodic cleanup of adapter leases that no session owns. */
+    val reconciliation: ReconciliationConfig = ReconciliationConfig()
 )
+
+@Serializable
+enum class QueuePolicy {
+    /** Strictly first come, first served: nothing overtakes the head of the queue. */
+    @SerialName("fifo")
+    FIFO,
+
+    /** Higher session priority first; first come, first served within a priority. */
+    @SerialName("priority")
+    PRIORITY
+}
+
+@Serializable
+data class SchedulerConfig(
+    val policy: QueuePolicy = QueuePolicy.FIFO
+)
+
+@Serializable
+data class RegistrationConfig(
+    /** Self-registered adapters are told to heartbeat this often. */
+    val heartbeatIntervalSeconds: Long = 30,
+    /** A registration without a heartbeat for this long stops receiving new sessions. */
+    val ttlSeconds: Long = 90
+) {
+    init {
+        require(heartbeatIntervalSeconds > 0) { "registration.heartbeatIntervalSeconds must be positive" }
+        require(ttlSeconds > heartbeatIntervalSeconds) { "registration.ttlSeconds must exceed heartbeatIntervalSeconds" }
+    }
+}
+
+@Serializable
+data class ReconciliationConfig(
+    val enabled: Boolean = true,
+    /** How often adapters are asked for their leases. An orphan is released on the second pass that sees it. */
+    val intervalSeconds: Long = 300
+) {
+    init {
+        require(intervalSeconds >= MIN_RECONCILIATION_INTERVAL_SECONDS) {
+            "reconciliation.intervalSeconds must be at least $MIN_RECONCILIATION_INTERVAL_SECONDS"
+        }
+    }
+
+    private companion object {
+        const val MIN_RECONCILIATION_INTERVAL_SECONDS = 30L
+    }
+}
 
 @Serializable
 data class QuotasConfig(
@@ -124,7 +177,12 @@ data class ProviderConfig(
      * Blank means the adapter is running without auth (local dev only).
      */
     val secret: String = ""
-)
+) {
+    init {
+        // ':' separates provider and device in global device ids (`rack-1:R58M123`).
+        require(':' !in name) { "Provider name '$name' must not contain ':'" }
+    }
+}
 
 /**
  * Placeholder substituted for a non-blank [ProviderConfig.secret] whenever a config

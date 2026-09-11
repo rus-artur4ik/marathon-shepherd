@@ -3,6 +3,9 @@ package dev.shepherd
 import dev.shepherd.domain.FleetMonitor
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.audit.AuditTrail
+import dev.shepherd.domain.devices.DeviceCatalog
+import dev.shepherd.domain.events.EventBus
+import dev.shepherd.domain.provider.ProviderRegistrationService
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.infra.auth.AccessControl
@@ -19,6 +22,9 @@ class ManagerServices(
     val accessControl: AccessControl,
     val auditStore: AuditStore,
     val audit: AuditTrail,
+    val eventBus: EventBus,
+    val deviceCatalog: DeviceCatalog,
+    val registrations: ProviderRegistrationService,
     val metrics: MicrometerManagerMetrics = MicrometerManagerMetrics()
 ) {
     /**

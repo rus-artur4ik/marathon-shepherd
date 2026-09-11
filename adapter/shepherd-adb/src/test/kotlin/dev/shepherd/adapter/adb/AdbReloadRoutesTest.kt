@@ -45,6 +45,7 @@ class AdbReloadRoutesTest {
         val body = response.bodyAsText()
         assertTrue(body.contains("\"adbReload\": \"ok\""), body)
         assertTrue(body.contains("\"deviceType\": \"physical\""), body)
+        assertTrue(body.contains("\"id\": \"serial-1\""), body)
     }
 
     @Test
@@ -185,6 +186,9 @@ private class FakeAdbReloadHandler : AdapterHandler(adapterType = "adb") {
                     abi = "arm64-v8a",
                     count = 1
                 )
+            ),
+            devices = listOf(
+                AdapterDevice(id = "serial-1", deviceType = DEVICE_TYPE_PHYSICAL, state = DEVICE_STATE_AVAILABLE, apiLevel = "34")
             )
         )
     }

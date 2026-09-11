@@ -39,7 +39,8 @@ class FileCloudOrchestratorLeaseStore(
                     storedLease.leaseId to CloudOrchestratorLease(
                         group = storedLease.group,
                         count = storedLease.count,
-                        releasePath = storedLease.releasePath.orEmpty()
+                        releasePath = storedLease.releasePath.orEmpty(),
+                        sessionId = storedLease.sessionId
                     )
                 }
         } catch (error: Exception) {
@@ -59,7 +60,8 @@ class FileCloudOrchestratorLeaseStore(
                     leaseId = entry.key,
                     group = entry.value.group,
                     count = entry.value.count,
-                    releasePath = entry.value.releasePath.ifBlank { null }
+                    releasePath = entry.value.releasePath.ifBlank { null },
+                    sessionId = entry.value.sessionId
                 )
             }
         stateFile.writeText(json.encodeToString(serializedLeases))
@@ -71,5 +73,7 @@ private data class StoredCloudOrchestratorLease(
     val leaseId: String,
     val group: String,
     val count: Int,
-    val releasePath: String? = null
+    val releasePath: String? = null,
+    // Optional, so lease files written before sessions were recorded still load.
+    val sessionId: String? = null
 )

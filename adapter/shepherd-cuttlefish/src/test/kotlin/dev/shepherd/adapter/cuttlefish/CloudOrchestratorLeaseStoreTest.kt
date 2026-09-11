@@ -25,4 +25,14 @@ class CloudOrchestratorLeaseStoreTest {
 
         assertEquals(leases, restored)
     }
+
+    @Test
+    fun `should restore the session a lease was acquired for`() {
+        val stateFile = File(tempDir, "leases.json")
+        val leases = mapOf("lease_a" to CloudOrchestratorLease(group = "group-a", count = 1, sessionId = "session-1"))
+
+        FileCloudOrchestratorLeaseStore(stateFile).saveLeases(leases)
+
+        assertEquals(leases, FileCloudOrchestratorLeaseStore(stateFile).loadLeases())
+    }
 }

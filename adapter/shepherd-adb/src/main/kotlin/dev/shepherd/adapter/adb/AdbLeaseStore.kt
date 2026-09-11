@@ -47,7 +47,8 @@ class FileAdbLeaseStore(
                                 model = storedDevice.model,
                                 abi = storedDevice.abi
                             )
-                        }
+                        },
+                        sessionId = storedLease.sessionId
                     )
                 }
         } catch (e: Exception) {
@@ -74,7 +75,8 @@ class FileAdbLeaseStore(
                                 model = device.model,
                                 abi = device.abi
                             )
-                        }
+                        },
+                    sessionId = entry.value.sessionId
                 )
             }
         stateFile.writeText(json.encodeToString(serializedLeases))
@@ -83,7 +85,9 @@ class FileAdbLeaseStore(
 
 data class AdbLease(
     val leaseId: String,
-    val devices: List<AdbLeasedDevice>
+    val devices: List<AdbLeasedDevice>,
+    /** The manager session the lease was acquired for, when the manager said; for logs and lease listings. */
+    val sessionId: String? = null
 )
 
 data class AdbLeasedDevice(
@@ -98,7 +102,9 @@ data class AdbLeasedDevice(
 @Serializable
 private data class StoredAdbLease(
     val leaseId: String,
-    val devices: List<StoredAdbLeasedDevice>
+    val devices: List<StoredAdbLeasedDevice>,
+    // Optional, so lease files written before sessions were recorded still load.
+    val sessionId: String? = null
 )
 
 @Serializable

@@ -7,17 +7,23 @@ import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.auth.Actor
 import dev.shepherd.domain.auth.ClientQuota
 import dev.shepherd.domain.auth.Role
+import dev.shepherd.domain.devices.DeviceCatalog
+import dev.shepherd.domain.events.EventBus
 import dev.shepherd.domain.model.AdbServer
+import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.domain.provider.AcquireResult
 import dev.shepherd.domain.provider.DevicePoolStatus
 import dev.shepherd.domain.provider.DeviceProvider
+import dev.shepherd.domain.provider.ProviderRegistrationService
 import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.infra.audit.StoreAuditTrail
 import dev.shepherd.infra.auth.AccessControl
 import dev.shepherd.infra.auth.ClientStore
 import dev.shepherd.infra.config.ConfigStore
+import dev.shepherd.infra.devices.MaintenanceStore
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
+import dev.shepherd.infra.providers.RegistrationStore
 import dev.shepherd.infra.state.StateStore
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -41,8 +47,10 @@ internal fun createRouteProviderRegistry(tempDir: File, configName: String, prov
 internal fun createRouteProviderRegistry(configFile: File, providers: List<DeviceProvider>): ProviderRegistry {
     val configStore = ConfigStore(configFile.absolutePath)
     val httpClient = HttpClient(CIO)
+    // Self-registered adapters are not in the fixture list; give them an empty fake.
     return ProviderRegistry(configStore, httpClient) { providerConfig, _ ->
-        providers.first { provider -> provider.name == providerConfig.name }
+        providers.firstOrNull { provider -> provider.name == providerConfig.name }
+            ?: dev.shepherd.domain.provider.FakeDeviceProvider(name = providerConfig.name, totalDevices = 0)
     }
 }
 
@@ -128,15 +136,26 @@ internal fun managerServices(
 ): ManagerServices {
     val auditStore = AuditStore(stateStore.db)
     val audit = StoreAuditTrail(auditStore)
+    val eventBus = EventBus()
+    val maintenanceStore = MaintenanceStore(stateStore.db)
+    val fleetMonitor = FleetMonitor(
+        providerCatalog = providerRegistry,
+        sessionCounts = { stateStore.countActiveSessions() },
+        metrics = metrics,
+        events = eventBus
+    )
     return ManagerServices(
         providerRegistry = providerRegistry,
         stateStore = stateStore,
-        sessionManager = sessionManager ?: SessionManager(providerRegistry, stateStore, audit = audit),
-        fleetMonitor = FleetMonitor(
+        sessionManager = sessionManager ?: SessionManager(
             providerCatalog = providerRegistry,
-            sessionCounts = { stateStore.countActiveSessions() },
-            metrics = metrics
+            stateStore = stateStore,
+            audit = audit,
+            events = eventBus,
+            maintenanceDeviceIds = { maintenanceStore.all().keys },
+            queuePolicy = { providerRegistry.currentConfig().scheduler.policy }
         ),
+        fleetMonitor = fleetMonitor,
         accessControl = AccessControl(
             clients = ClientStore(stateStore.db),
             audit = audit,
@@ -145,6 +164,21 @@ internal fun managerServices(
         ),
         auditStore = auditStore,
         audit = audit,
+        eventBus = eventBus,
+        deviceCatalog = DeviceCatalog(
+            fleetMonitor = fleetMonitor,
+            readySessions = { stateStore.listSessions(SessionStatus.READY) },
+            maintenance = maintenanceStore,
+            audit = audit,
+            events = eventBus
+        ),
+        registrations = ProviderRegistrationService(
+            registry = providerRegistry,
+            repository = RegistrationStore(stateStore.db),
+            hasActiveLeases = { name -> stateStore.hasActiveLeasesForProvider(name) },
+            audit = audit,
+            events = eventBus
+        ),
         metrics = metrics
     )
 }

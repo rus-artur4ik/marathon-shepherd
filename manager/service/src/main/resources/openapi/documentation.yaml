@@ -30,6 +30,10 @@ tags:
     description: Provider configuration (`msh.yaml`).
   - name: access
     description: API clients, keys, quotas and the audit log.
+  - name: providers
+    description: Adapters, configured or self-registered.
+  - name: events
+    description: Live stream of what the manager does.
   - name: operations
     description: Probes, metrics and this document.
 paths:
@@ -249,8 +253,11 @@ paths:
   /api/v1/devices:
     get:
       tags: [devices]
-      operationId: listProviders
-      summary: Fleet inventory by provider
+      operationId: listDevices
+      summary: Fleet inventory, by provider and device by device
+      description: |
+        `providers` summarises every provider's pool. `devices` lists individual devices of
+        providers that report them (shepherd-adb does; pool-only farms do not), after the filters.
       parameters:
         - name: refresh
           in: query
@@ -258,6 +265,33 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/DeviceState"
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: deviceType
+          in: query
+          schema:
+            type: string
+            enum: [physical, emulator]
+        - name: api
+          in: query
+          description: API level selector, same syntax as in session requests.
+          schema:
+            type: string
+        - name: label
+          in: query
+          description: "`key=value`; repeat to require several labels."
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
       responses:
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -538,6 +572,241 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/devices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DeviceId"
+    get:
+      tags: [devices]
+      operationId: getDevice
+      summary: One device
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/devices/{id}/maintenance:
+    parameters:
+      - $ref: "#/components/parameters/DeviceId"
+    put:
+      tags: [devices]
+      operationId: enterMaintenance
+      summary: Put a device into maintenance
+      description: |
+        The device is never allocated while in maintenance. A session holding it keeps it
+        until released. Admin only.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintenanceRequest"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The device, now in maintenance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [devices]
+      operationId: leaveMaintenance
+      summary: Take a device out of maintenance
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: Cleared, or the device was not in maintenance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /api/v1/sessions/{id}/heartbeat:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: heartbeatSession
+      summary: Keep a session alive
+      description: |
+        Keeps a queued session in line and stops a ready session with `idleTimeoutSeconds`
+        from being released as idle. Owner or admin.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/sessions/{id}/extend:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: extendSession
+      summary: Change a session's remaining lifetime
+      description: |
+        Sets the expiry to `ttlSeconds` from now, bounded by the client's
+        `maxSessionLifetimeSeconds`. For a ready session every lease is renewed first; if a
+        provider cannot renew leases the call fails with 409 and nothing changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtendSessionRequest"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The session with its new expiry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/providers:
+    get:
+      tags: [providers]
+      operationId: listProviderRegistrations
+      summary: Providers from msh.yaml and self-registered adapters
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: Every known provider.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProviderInfo"
+  /api/v1/providers/register:
+    post:
+      tags: [providers]
+      operationId: registerProvider
+      summary: Register an adapter, or heartbeat an existing registration
+      description: |
+        Called by adapters with a `provider` key (see `MSH_MANAGER_URL` and
+        `MSH_REGISTRATION_TOKEN` on the adapter). Repeat at least every
+        `heartbeatIntervalSeconds`; a registration without a heartbeat for `ttlSeconds`
+        receives no new sessions. A name belongs to the client that registered it first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderRegistrationRequest"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderRegistrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/providers/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [providers]
+      operationId: deregisterProvider
+      summary: Remove a self-registered provider
+      description: Admin only. Refused while the provider holds devices for active sessions.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Server-sent event stream
+      description: |
+        Session, device and provider events as `text/event-stream`. Each event has an `id`,
+        an `event` type and a JSON `data` line (an Event). Reconnect with `Last-Event-ID` to
+        receive the buffered events you missed. The buffer holds the last 1000 events and
+        ids restart with the manager.
+      parameters:
+        - name: types
+          in: query
+          description: Comma-separated type prefixes, e.g. `session.,provider.down`.
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: integer
+            format: int64
+        - name: lastEventId
+          in: query
+          description: Same as the `Last-Event-ID` header, for clients that cannot set headers.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: The stream; it stays open.
+          content:
+            text/event-stream:
+              schema:
+                type: string
 components:
   securitySchemes:
     bearerAuth:
@@ -545,6 +814,14 @@ components:
       scheme: bearer
       description: "An API key: `Authorization: Bearer msh_...`."
   parameters:
+    DeviceId:
+      name: id
+      in: path
+      required: true
+      description: Global device id, `<provider>:<device id>`.
+      schema:
+        type: string
+      example: "rack-1:R58M123ABC"
     ClientId:
       name: id
       in: path
@@ -661,6 +938,61 @@ components:
           type: string
           deprecated: true
           description: Legacy alias of `api`.
+        deviceIds:
+          type: array
+          maxItems: 64
+          description: Global ids of the only devices this session may receive. Without `maxDevices`, asks for all of them.
+          items:
+            type: string
+        labels:
+          type: object
+          description: Every device must carry all of these labels.
+          additionalProperties:
+            type: string
+        name:
+          type: string
+          maxLength: 200
+          description: Display name, e.g. a CI job and build number.
+        metadata:
+          type: object
+          description: Free-form key/value pairs returned with the session.
+          additionalProperties:
+            type: string
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          default: 0
+          description: Queue priority under the `priority` scheduler; limited by the client's `maxPriority`.
+        idleTimeoutSeconds:
+          type: integer
+          format: int64
+          minimum: 30
+          description: Release the session when it stays READY without a heartbeat this long.
+    ExtendSessionRequest:
+      type: object
+      required: [ttlSeconds]
+      properties:
+        ttlSeconds:
+          type: integer
+          format: int64
+          minimum: 1
+    SessionDevice:
+      type: object
+      required: [id, provider, localId]
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        localId:
+          type: string
+        adbServer:
+          $ref: "#/components/schemas/AdbServer"
+        model:
+          type: string
+        apiLevel:
+          type: string
     WaitSessionRequest:
       type: object
       properties:
@@ -703,6 +1035,33 @@ components:
         owner:
           type: string
           description: Name of the client that created the session.
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        priority:
+          type: integer
+        idleTimeoutSeconds:
+          type: integer
+          format: int64
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        deviceIds:
+          type: array
+          items:
+            type: string
+        devices:
+          type: array
+          description: Devices held while READY, for providers that report individual devices.
+          items:
+            $ref: "#/components/schemas/SessionDevice"
+        lastHeartbeatAt:
+          type: string
+          format: date-time
     PoolStatus:
       type: object
       required: [available, busy, total]
@@ -725,6 +1084,139 @@ components:
           type: integer
         totalBusy:
           type: integer
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+    DeviceState:
+      type: string
+      enum: [available, busy, offline, maintenance]
+    Device:
+      type: object
+      required: [id, provider, localId, deviceType, state]
+      properties:
+        id:
+          type: string
+          description: Global id, `<provider>:<device id>`.
+        provider:
+          type: string
+        localId:
+          type: string
+        deviceType:
+          type: string
+        state:
+          $ref: "#/components/schemas/DeviceState"
+        apiLevel:
+          type: string
+        manufacturer:
+          type: string
+        model:
+          type: string
+        abi:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        details:
+          type: object
+          additionalProperties:
+            type: string
+        sessionId:
+          type: string
+        owner:
+          type: string
+        maintenance:
+          $ref: "#/components/schemas/Maintenance"
+    Maintenance:
+      type: object
+      required: [by, since]
+      properties:
+        reason:
+          type: string
+        by:
+          type: string
+        since:
+          type: string
+          format: date-time
+    MaintenanceRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    ProviderInfo:
+      type: object
+      required: [name, source, url, active]
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+          enum: [static, registered]
+        url:
+          type: string
+        accessHost:
+          type: string
+        adapterType:
+          type: string
+        healthy:
+          type: boolean
+        active:
+          type: boolean
+          description: False for a registration whose heartbeat lapsed.
+        registeredBy:
+          type: string
+        registeredAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+    ProviderRegistrationRequest:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+        url:
+          type: string
+          description: Base URL the manager uses to reach the adapter.
+        accessHost:
+          type: string
+        secret:
+          type: string
+          description: The adapter's ADAPTER_SECRET, so the manager can call it back.
+        adapterType:
+          type: string
+    ProviderRegistrationResponse:
+      type: object
+      required: [name, heartbeatIntervalSeconds, ttlSeconds]
+      properties:
+        name:
+          type: string
+        heartbeatIntervalSeconds:
+          type: integer
+          format: int64
+        ttlSeconds:
+          type: integer
+          format: int64
+    Event:
+      type: object
+      required: [id, type, at, data]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          examples: [session.ready, device.maintenance, provider.down]
+        at:
+          type: string
+          format: date-time
+        data:
+          type: object
     ProviderStatus:
       type: object
       required: [name, adbHost, adbPort, access, capabilities, inventory, pool, status]
@@ -998,6 +1490,40 @@ components:
           $ref: "#/components/schemas/QuotasConfig"
         audit:
           $ref: "#/components/schemas/AuditConfig"
+        scheduler:
+          $ref: "#/components/schemas/SchedulerConfig"
+        registration:
+          $ref: "#/components/schemas/RegistrationConfig"
+        reconciliation:
+          $ref: "#/components/schemas/ReconciliationConfig"
+    SchedulerConfig:
+      type: object
+      properties:
+        policy:
+          type: string
+          enum: [fifo, priority]
+          default: fifo
+    RegistrationConfig:
+      type: object
+      properties:
+        heartbeatIntervalSeconds:
+          type: integer
+          format: int64
+          default: 30
+        ttlSeconds:
+          type: integer
+          format: int64
+          default: 90
+    ReconciliationConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        intervalSeconds:
+          type: integer
+          format: int64
+          default: 300
     QuotasConfig:
       type: object
       properties:

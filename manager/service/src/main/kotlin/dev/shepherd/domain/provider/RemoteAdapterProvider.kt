@@ -10,8 +10,12 @@ import dev.shepherd.adapter.api.AdapterAccess
 import dev.shepherd.adapter.api.AdapterCapabilities
 import dev.shepherd.adapter.api.AdapterConnection
 import dev.shepherd.adapter.api.AdapterConnectionAuth
+import dev.shepherd.adapter.api.AdapterDevice
 import dev.shepherd.adapter.api.AdapterDeviceProfile
+import dev.shepherd.adapter.api.AdapterLease
+import dev.shepherd.adapter.api.LeasesResponse
 import dev.shepherd.adapter.api.PoolStatusResponse
+import dev.shepherd.adapter.api.RenewLeaseRequest
 import dev.shepherd.adapter.api.preferredAdbTcpConnection
 import dev.shepherd.domain.metrics.ManagerMetrics
 import dev.shepherd.domain.model.AdapterTimeoutsConfig
@@ -56,17 +60,21 @@ class RemoteAdapterProvider(
 ) : DeviceProvider {
 
     private val logger = LoggerFactory.getLogger(RemoteAdapterProvider::class.java)
+
+    // encodeDefaults stays off: empty selection fields are left out of the acquire body, so
+    // adapters that predate them still accept it.
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
      * Immutable snapshot of the last known adapter state.
-     * Written as a single reference swap so readers always see a consistent triplet,
-     * never a mix of old access + new inventory.
+     * Written as a single reference swap so readers always see a consistent view,
+     * never a mix of old access and new inventory.
      */
     private data class AdapterCache(
         val access: AdapterAccess,
         val capabilities: AdapterCapabilities,
-        val inventory: List<AdapterDeviceProfile>
+        val inventory: List<AdapterDeviceProfile>,
+        val devices: List<AdapterDevice> = emptyList()
     )
 
     @Volatile
@@ -82,6 +90,7 @@ class RemoteAdapterProvider(
     override val access: AdapterAccess get() = cache.access
     override val capabilities: AdapterCapabilities get() = cache.capabilities
     override val inventory: List<AdapterDeviceProfile> get() = cache.inventory
+    override val devices: List<AdapterDevice> get() = cache.devices
 
     override suspend fun queryDevices(): DevicePoolStatus =
         call(OPERATION_STATUS, timeouts().statusSeconds, fallback = EMPTY_POOL) { outcome ->
@@ -90,7 +99,12 @@ class RemoteAdapterProvider(
             }
             if (response.status.isSuccess()) {
                 val body: PoolStatusResponse = json.decodeFromString(response.bodyAsText())
-                cache = AdapterCache(normalizeAccessHost(body.access, accessHost), body.capabilities, body.inventory)
+                cache = AdapterCache(
+                    access = normalizeAccessHost(body.access, accessHost),
+                    capabilities = body.capabilities,
+                    inventory = body.inventory,
+                    devices = body.devices
+                )
                 DevicePoolStatus(
                     available = body.pool.available,
                     busy = body.pool.busy,
@@ -103,13 +117,24 @@ class RemoteAdapterProvider(
             }
         }
 
-    override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult = call(
+    override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long): AcquireResult =
+        acquire(count, apiLevel, ttlSeconds, DeviceSelection.ANY)
+
+    override suspend fun acquire(count: Int, apiLevel: String, ttlSeconds: Long, selection: DeviceSelection): AcquireResult = call(
         OPERATION_ACQUIRE,
         timeouts().acquireSeconds,
         fallback = EMPTY_ACQUIRE,
         context = "count=$count api=$apiLevel ttl=${ttlSeconds}s"
     ) { outcome ->
-        val request = AcquireRequest(count = count, apiLevel = apiLevel, ttlSeconds = ttlSeconds)
+        val request = AcquireRequest(
+            count = count,
+            apiLevel = apiLevel,
+            ttlSeconds = ttlSeconds,
+            deviceIds = selection.deviceIds,
+            excludeDeviceIds = selection.excludeDeviceIds,
+            labels = selection.labels,
+            sessionId = selection.sessionId
+        )
         val response = httpClient.post("$adapterUrl/acquire") {
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(AcquireRequest.serializer(), request))
@@ -120,7 +145,8 @@ class RemoteAdapterProvider(
         if (response.status.isSuccess()) {
             val body: AcquireResponse = json.decodeFromString(responseBody)
             val normalizedAccess: AdapterAccess = normalizeAccessHost(body.access, accessHost)
-            cache = AdapterCache(normalizedAccess, body.capabilities, body.inventory)
+            // The acquire answer carries no device list; keep the one from the last status.
+            cache = cache.copy(access = normalizedAccess, capabilities = body.capabilities, inventory = body.inventory)
             val adbServers: List<AdbServer> = normalizedAccess.connections
                 .filter { connection ->
                     connection.protocol == ACCESS_PROTOCOL_ADB &&
@@ -133,10 +159,17 @@ class RemoteAdapterProvider(
                     "preferredAccess=${preferredConnection?.host}:${preferredConnection?.port}, " +
                     "adbServers=${adbServers.joinToString { server -> "${server.host}:${server.port}" }}"
             )
+            val connectionsById: Map<String, AdapterConnection> = normalizedAccess.connections.associateBy { it.id }
             AcquireResult(
                 leaseId = body.leaseId,
                 acquiredCount = body.acquiredCount,
-                adbServers = adbServers
+                adbServers = adbServers,
+                devices = body.devices.map { device ->
+                    LeasedDevice(
+                        id = device.id,
+                        adbServer = device.connectionId?.let { id -> connectionsById[id]?.toAdbServer() }
+                    )
+                }
             )
         } else {
             // 503 is the contract's "nothing free right now" — routine while sessions
@@ -181,6 +214,33 @@ class RemoteAdapterProvider(
                 outcome.value = OUTCOME_HTTP_ERROR
                 logger.error("Adapter '{}' release failed for {}: {}", name, leaseId, response.status)
             }
+        }
+    }
+
+    override suspend fun renew(leaseId: String, ttlSeconds: Long): Boolean =
+        call(OPERATION_RENEW, timeouts().releaseSeconds, fallback = false, context = "lease=$leaseId") { outcome ->
+            val response = httpClient.post("$adapterUrl/leases/$leaseId/renew") {
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(RenewLeaseRequest.serializer(), RenewLeaseRequest(ttlSeconds)))
+                if (secret.isNotBlank()) bearerAuth(secret)
+            }
+            response.status.isSuccess().also { renewed ->
+                if (!renewed) {
+                    outcome.value = OUTCOME_HTTP_ERROR
+                    logger.warn("Adapter '{}' refused to renew lease {}: {}", name, leaseId, response.status)
+                }
+            }
+        }
+
+    override suspend fun leases(): List<AdapterLease>? = call(OPERATION_LEASES, timeouts().statusSeconds, fallback = null) { outcome ->
+        val response = httpClient.get("$adapterUrl/leases") {
+            if (secret.isNotBlank()) bearerAuth(secret)
+        }
+        if (response.status.isSuccess()) {
+            json.decodeFromString(LeasesResponse.serializer(), response.bodyAsText()).leases
+        } else {
+            outcome.value = OUTCOME_HTTP_ERROR
+            null
         }
     }
 
@@ -261,6 +321,8 @@ class RemoteAdapterProvider(
         const val OPERATION_STATUS = "status"
         const val OPERATION_ACQUIRE = "acquire"
         const val OPERATION_RELEASE = "release"
+        const val OPERATION_RENEW = "renew"
+        const val OPERATION_LEASES = "leases"
         const val OUTCOME_SUCCESS = "success"
         const val OUTCOME_UNAVAILABLE = "unavailable"
         const val OUTCOME_HTTP_ERROR = "http_error"

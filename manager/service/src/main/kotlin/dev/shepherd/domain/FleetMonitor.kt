@@ -2,7 +2,10 @@ package dev.shepherd.domain
 
 import dev.shepherd.adapter.api.AdapterAccess
 import dev.shepherd.adapter.api.AdapterCapabilities
+import dev.shepherd.adapter.api.AdapterDevice
 import dev.shepherd.adapter.api.AdapterDeviceProfile
+import dev.shepherd.domain.events.EventPublisher
+import dev.shepherd.domain.events.EventTypes
 import dev.shepherd.domain.metrics.ManagerMetrics
 import dev.shepherd.domain.model.ActiveSessionCounts
 import dev.shepherd.domain.provider.DevicePoolStatus
@@ -21,6 +24,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
@@ -44,7 +49,9 @@ data class ProviderStatus(
     val pool: DevicePoolStatus,
     val isHealthy: Boolean,
     /** Why the provider is unhealthy or its pool unknown; null when the poll succeeded. */
-    val error: String? = null
+    val error: String? = null,
+    /** Individual devices, for providers that report them; stale when [isHealthy] is false. */
+    val devices: List<AdapterDevice> = emptyList()
 )
 
 /**
@@ -60,7 +67,8 @@ class FleetMonitor(
     private val sessionCounts: suspend () -> ActiveSessionCounts = { ActiveSessionCounts.NONE },
     private val metrics: ManagerMetrics = ManagerMetrics.NONE,
     private val pollTimeout: () -> Duration = { DEFAULT_POLL_TIMEOUT },
-    private val clock: Clock = Clock.systemUTC()
+    private val clock: Clock = Clock.systemUTC(),
+    private val events: EventPublisher = EventPublisher.NONE
 ) {
     private val logger = LoggerFactory.getLogger(FleetMonitor::class.java)
     private val refreshLock = Mutex()
@@ -158,11 +166,12 @@ class FleetMonitor(
             inventory = provider.inventory,
             pool = pool,
             isHealthy = healthy,
-            error = error
+            error = error,
+            devices = provider.devices
         )
     }
 
-    /** Logs only when a provider changes state, so a dead adapter does not log every interval. */
+    /** Logs and publishes only when a provider changes state, so a dead adapter does not spam every interval. */
     private fun logHealthTransition(name: String, healthy: Boolean, error: String?) {
         val previous: Boolean? = lastHealth.put(name, healthy)
         if (previous == healthy) {
@@ -172,6 +181,16 @@ class FleetMonitor(
             logger.info("Provider '{}' is healthy", name)
         } else {
             logger.warn("Provider '{}' is unhealthy: {}", name, error)
+        }
+        // The first observation is a starting state, not a change worth announcing.
+        if (previous != null) {
+            events.publish(
+                if (healthy) EventTypes.PROVIDER_UP else EventTypes.PROVIDER_DOWN,
+                buildJsonObject {
+                    put("provider", name)
+                    error?.let { reason -> put("error", reason) }
+                }
+            )
         }
     }
 

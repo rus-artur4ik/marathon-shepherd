@@ -142,18 +142,26 @@ class CloudOrchestratorServiceTest {
     }
 }
 
-private class FakeLegacyCloudOrchestratorBackend(initialInstances: Int) {
+/** Also used by [CuttlefishAdapterHandlerTest]. */
+internal class FakeLegacyCloudOrchestratorBackend(initialInstances: Int) {
     private val json = Json { ignoreUnknownKeys = true }
     private val groups = ConcurrentHashMap<String, Int>(mapOf("bootstrap" to initialInstances))
     var lastBuildTarget: String? = null
+        private set
+
+    /** How often the device list was fetched, so tests can tell how many listings a call costs. */
+    @Volatile
+    var deviceListings: Int = 0
         private set
 
     fun handle(exchange: HttpExchange) {
         when {
             exchange.requestMethod == "GET" && exchange.requestURI.path == "/health" ->
                 respondJson(exchange, 200, """{"status":"ok"}""")
-            exchange.requestMethod == "GET" && exchange.requestURI.path == "/devices" ->
+            exchange.requestMethod == "GET" && exchange.requestURI.path == "/devices" -> {
+                deviceListings += 1
                 respondJson(exchange, 200, devicesJson())
+            }
             exchange.requestMethod == "POST" && exchange.requestURI.path == "/cvds" ->
                 handleCreate(exchange)
             exchange.requestMethod == "DELETE" && exchange.requestURI.path.startsWith("/cvds/") ->

@@ -99,6 +99,70 @@ class AdbServiceTest {
     }
 
     @Test
+    fun `listDeviceInventory should report attached devices that cannot be leased and why`() = runBlocking {
+        val commands = mutableListOf<List<String>>()
+        val noPermissions = "no permissions (user in plugdev group; are your udev rules wrong?)"
+        val service = AdbService(
+            commandRunner = { command, _ ->
+                commands += command
+                when (command) {
+                    listOf("adb", "devices") -> CommandResult(
+                        0,
+                        listOf(
+                            "* daemon not running; starting now at tcp:5037",
+                            "* daemon started successfully",
+                            "List of devices attached",
+                            "serial-ready\tdevice",
+                            "serial-unauthorized\tunauthorized",
+                            "serial-offline\toffline",
+                            "serial-denied\t$noPermissions",
+                            "serial-booting\tdevice",
+                            "serial-broken\tdevice",
+                            "emulator-5554\tdevice",
+                            "emulator-5556\toffline"
+                        ).joinToString("\n"),
+                        true
+                    )
+
+                    listOf("adb", "-s", "serial-ready", "shell", "getprop") -> CommandResult(0, BOOTED_PIXEL_PROPERTIES, true)
+                    listOf("adb", "-s", "serial-booting", "shell", "getprop") -> CommandResult(0, BOOTING_PIXEL_PROPERTIES, true)
+                    listOf("adb", "-s", "serial-broken", "shell", "getprop") -> CommandResult(1, "error: closed", false)
+                    else -> CommandResult(1, "unexpected command", false)
+                }
+            }
+        )
+
+        val inventory = service.listDeviceInventory()
+
+        assertEquals(listOf("serial-ready"), inventory.readyDevices.map { device -> device.serial })
+        assertEquals(
+            listOf(
+                AdbUnavailableDevice(serial = "serial-unauthorized", reason = "unauthorized"),
+                AdbUnavailableDevice(serial = "serial-offline", reason = "offline"),
+                AdbUnavailableDevice(serial = "serial-denied", reason = noPermissions),
+                AdbUnavailableDevice(
+                    serial = "serial-booting",
+                    reason = ADB_REASON_BOOTING,
+                    apiLevel = "34",
+                    manufacturer = "Google",
+                    model = "Pixel 8",
+                    abi = "arm64-v8a"
+                ),
+                AdbUnavailableDevice(serial = "serial-broken", reason = ADB_REASON_GETPROP_FAILED)
+            ),
+            inventory.unavailableDevices
+        )
+        assertEquals(1, commands.count { command -> command == listOf("adb", "devices") })
+    }
+
+    @Test
+    fun `listDeviceInventory should be empty when adb devices fails`() = runBlocking {
+        val service = AdbService(commandRunner = { _, _ -> CommandResult(1, "cannot connect to daemon", false) })
+
+        assertEquals(AdbDeviceInventory(), service.listDeviceInventory())
+    }
+
+    @Test
     fun `reloadServer should kill and restart local adb daemon`() = runBlocking {
         val commands = mutableListOf<List<String>>()
         val service = AdbService(
@@ -178,3 +242,20 @@ class AdbServiceTest {
         assertTrue(result.output.contains("did not become reachable"))
     }
 }
+
+private val BOOTED_PIXEL_PROPERTIES: String = """
+    [sys.boot_completed]: [1]
+    [ro.build.version.sdk]: [34]
+    [ro.product.manufacturer]: [Google]
+    [ro.product.model]: [Pixel 8]
+    [ro.product.cpu.abi]: [arm64-v8a]
+""".trimIndent()
+
+private val BOOTING_PIXEL_PROPERTIES: String = """
+    [sys.boot_completed]: [0]
+    [init.svc.bootanim]: [running]
+    [ro.build.version.sdk]: [34]
+    [ro.product.manufacturer]: [Google]
+    [ro.product.model]: [Pixel 8]
+    [ro.product.cpu.abi]: [arm64-v8a]
+""".trimIndent()

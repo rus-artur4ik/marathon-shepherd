@@ -18,7 +18,15 @@ dependencies {
     api(libs.micrometer.registry.prometheus)
     api(libs.logback)
 
+    // Self-registration with the manager. The client type is part of ManagerRegistration's
+    // constructor, so it is `api`; the engine and JSON plugin are implementation details.
+    api(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.content.negotiation)
+
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlin.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

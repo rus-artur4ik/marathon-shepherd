@@ -34,6 +34,9 @@ class MicrometerManagerMetrics(
     private val providerDevices: MultiGauge = MultiGauge.builder("msh.provider.devices")
         .description("Devices reported by each provider's last status poll, by state")
         .register(registry)
+    private val devices: MultiGauge = MultiGauge.builder("msh.devices")
+        .description("Devices of providers that list them individually, by adapter-reported state")
+        .register(registry)
     private val queueWait: Timer = Timer.builder("msh.sessions.queue.wait")
         .description("Time from session creation until the session received devices")
         .serviceLevelObjectives(*QUEUE_WAIT_BUCKETS)
@@ -45,6 +48,9 @@ class MicrometerManagerMetrics(
     @Volatile
     private var lastPollEpochSeconds: Double = 0.0
 
+    @Volatile
+    private var subscribers: Double = 0.0
+
     init {
         Gauge.builder("msh.build.info") { 1.0 }
             .description("Build metadata; the value is always 1")
@@ -52,6 +58,9 @@ class MicrometerManagerMetrics(
             .register(registry)
         Gauge.builder("msh.sessions.devices", this) { metrics -> metrics.allocatedDevices }
             .description("Devices currently held by READY sessions")
+            .register(registry)
+        Gauge.builder("msh.events.subscribers", this) { metrics -> metrics.subscribers }
+            .description("Clients connected to the event stream")
             .register(registry)
         Gauge.builder("msh.fleet.last.poll", this) { metrics -> metrics.lastPollEpochSeconds }
             .description("Unix time of the last completed fleet poll")
@@ -131,9 +140,31 @@ class MicrometerManagerMetrics(
             },
             true
         )
+        devices.register(
+            snapshot.providers.flatMap { provider ->
+                provider.devices
+                    .groupBy { device -> device.state to device.deviceType }
+                    .map { (key, grouped) ->
+                        MultiGauge.Row.of(Tags.of("provider", provider.name, "state", key.first, "device_type", key.second), grouped.size)
+                    }
+            },
+            true
+        )
         sessions.register(sessionRows(snapshot.sessions.pending, snapshot.sessions.ready), true)
         allocatedDevices = snapshot.sessions.allocatedDevices.toDouble()
         lastPollEpochSeconds = snapshot.takenAt.toEpochMilli() / 1_000.0
+    }
+
+    override fun leaseReclaimed(provider: String) {
+        Counter.builder("msh.leases.reclaimed")
+            .description("Orphaned adapter leases released by reconciliation")
+            .tag("provider", provider)
+            .register(registry)
+            .increment()
+    }
+
+    override fun eventSubscribers(count: Int) {
+        subscribers = count.toDouble()
     }
 
     private fun sessionRows(pending: Int, ready: Int): List<MultiGauge.Row<*>> = listOf(

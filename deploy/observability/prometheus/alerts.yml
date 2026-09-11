@@ -108,3 +108,23 @@ groups:
         annotations:
           summary: "Adapter target {{ $labels.instance }} is unreachable"
           description: "Prometheus has been unable to scrape adapter instance {{ $labels.instance }} (job=\"marathon-shepherd-adapters\") for at least 5 minutes. That adapter's own pool/acquire/release metrics are unavailable, though the manager's msh_provider_up for the corresponding provider is the better signal for whether it can still serve sessions."
+
+      - alert: ShepherdDevicesOffline
+        # Unauthorized, disconnected or stuck-booting devices on providers that list devices.
+        expr: sum by (provider) (msh_devices{state="offline"}) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.provider }} has offline devices"
+          description: "{{ $value }} device(s) on {{ $labels.provider }} have been offline for 30 minutes (unauthorized, disconnected or not booted). Check GET /api/v1/devices?state=offline."
+
+      - alert: ShepherdLeasesReclaimed
+        # Leases held on an adapter without a session: release calls are failing or timing out.
+        expr: sum by (provider) (increase(msh_leases_reclaimed_total[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Orphaned leases reclaimed on {{ $labels.provider }}"
+          description: "{{ $value }} lease(s) on {{ $labels.provider }} had no session and were released by reconciliation in the last hour. Look for release timeouts in msh_adapter_requests_seconds."
+
