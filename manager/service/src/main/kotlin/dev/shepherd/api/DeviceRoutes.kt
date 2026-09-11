@@ -1,8 +1,8 @@
 package dev.shepherd.api
 
-import dev.shepherd.api.dto.DevicesResponse
 import dev.shepherd.api.dto.toDto
 import dev.shepherd.domain.DeviceAllocator
+import dev.shepherd.protocol.DevicesResponse
 import io.ktor.server.application.call
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route

@@ -1,5 +1,6 @@
 package dev.shepherd.adapter.api
 
+import dev.shepherd.common.BuildInfo
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -32,7 +33,7 @@ data class AcquireResult(
  * Subclasses implement the four service-specific operations;
  * HTTP wiring is handled once by [Route.adapterRoutes].
  */
-abstract class AdapterHandler(val adapterType: String, val version: String = "0.1.0") {
+abstract class AdapterHandler(val adapterType: String, val version: String = BuildInfo.version) {
     abstract suspend fun isHealthy(): Boolean
     abstract suspend fun status(): AdapterStatus
 

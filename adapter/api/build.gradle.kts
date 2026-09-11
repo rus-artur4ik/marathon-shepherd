@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":adapter:contract"))
     implementation(libs.kotlinx.serialization.json)
 
     // Shared adapter runtime (auth, server bootstrap)

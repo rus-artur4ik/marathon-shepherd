@@ -4,6 +4,7 @@ import dev.shepherd.api.configRoutes
 import dev.shepherd.api.deviceRoutes
 import dev.shepherd.api.healthRoutes
 import dev.shepherd.api.sessionRoutes
+import dev.shepherd.common.BuildInfo
 import dev.shepherd.domain.DeviceAllocator
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.provider.ProviderRegistry
@@ -16,7 +17,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
-import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
@@ -30,7 +31,6 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientCon
 private val logger = LoggerFactory.getLogger("dev.shepherd.Application")
 private const val DEFAULT_MANAGER_PORT: Int = 6037
 private const val DEFAULT_STATE_STORE_NAME: String = "msh.db"
-private const val MANAGER_VERSION: String = "0.1.0"
 
 fun main(args: Array<String>) {
     val port: Int = readIntEnv("MSH_PORT") ?: DEFAULT_MANAGER_PORT
@@ -128,6 +128,6 @@ fun Application.configureServer(sessionManager: SessionManager, deviceAllocator:
         sessionRoutes(sessionManager)
         deviceRoutes(deviceAllocator)
         configRoutes(providerRegistry, sessionManager)
-        healthRoutes(deviceAllocator, version = MANAGER_VERSION)
+        healthRoutes(deviceAllocator, version = BuildInfo.version)
     }
 }

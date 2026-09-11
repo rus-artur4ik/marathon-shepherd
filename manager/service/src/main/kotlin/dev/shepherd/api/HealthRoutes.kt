@@ -1,26 +1,13 @@
 package dev.shepherd.api
 
 import dev.shepherd.domain.DeviceAllocator
+import dev.shepherd.protocol.ProviderHealthSummary
+import dev.shepherd.protocol.ShepherdHealthResponse
+import dev.shepherd.protocol.ShepherdLivenessResponse
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.Serializable
-
-@Serializable
-data class ProviderHealthSummary(val name: String, val status: String)
-
-@Serializable
-data class ShepherdHealthResponse(
-    val status: String,
-    val version: String,
-    val providersTotal: Int,
-    val providersHealthy: Int,
-    val providers: List<ProviderHealthSummary>
-)
-
-@Serializable
-data class ShepherdLivenessResponse(val status: String, val version: String)
 
 fun Route.healthRoutes(deviceAllocator: DeviceAllocator, version: String) {
     get("/live") {

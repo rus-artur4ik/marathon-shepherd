@@ -1,6 +1,5 @@
 package dev.shepherd.domain.model
 
-import kotlinx.serialization.Serializable
 import java.time.Instant
 
 enum class SessionStatus {
@@ -25,8 +24,5 @@ data class Session(
     val releasedAt: Instant?
 )
 
-@Serializable
-data class AdbServer(
-    val host: String,
-    val port: Int
-)
+/** The wire type is the domain type: an adb endpoint has exactly one shape. */
+typealias AdbServer = dev.shepherd.protocol.AdbServer

@@ -4,7 +4,6 @@ import dev.shepherd.adapter.api.AdapterAccess
 import dev.shepherd.adapter.api.AdapterCapabilities
 import dev.shepherd.adapter.api.AdapterDeviceProfile
 import dev.shepherd.domain.model.AdbServer
-import kotlinx.serialization.Serializable
 
 /**
  * Abstraction over any device source — physical rack, emulator farm, cloud service, etc.
@@ -52,12 +51,7 @@ interface DeviceProvider {
     suspend fun isHealthy(): Boolean
 }
 
-@Serializable
-data class DevicePoolStatus(
-    val available: Int,
-    val busy: Int,
-    val total: Int
-)
+typealias DevicePoolStatus = dev.shepherd.protocol.PoolStatus
 
 data class AcquireResult(
     val leaseId: String,

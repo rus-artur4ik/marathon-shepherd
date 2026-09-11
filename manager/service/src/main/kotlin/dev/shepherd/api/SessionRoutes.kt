@@ -1,9 +1,9 @@
 package dev.shepherd.api
 
-import dev.shepherd.api.dto.CreateSessionRequest
-import dev.shepherd.api.dto.WaitSessionRequest
 import dev.shepherd.api.dto.toResponse
 import dev.shepherd.domain.SessionManager
+import dev.shepherd.protocol.CreateSessionRequest
+import dev.shepherd.protocol.WaitSessionRequest
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*

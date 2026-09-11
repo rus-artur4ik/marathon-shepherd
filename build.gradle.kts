@@ -17,8 +17,20 @@ allprojects {
     }
 }
 
+// Exposed still declares kotlin-reflect 2.0. Keep every Kotlin artifact on the compiler's
+// version so reflection can read the metadata our own classes are compiled with.
+val kotlinVersion: String = libs.versions.kotlin.get()
+
 subprojects {
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
+
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "org.jetbrains.kotlin" && requested.name == "kotlin-reflect") {
+                useVersion(kotlinVersion)
+            }
+        }
+    }
 
     // Only the plain reporter. The default set includes SARIF, which drags in an extra
     // dependency (sarif4k) that `./gradlew build` would then have to resolve — turning a

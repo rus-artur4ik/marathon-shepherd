@@ -10,7 +10,7 @@ application {
 }
 
 dependencies {
-    implementation(project(":adapter:api"))
+    implementation(project(":manager:protocol"))
 
     // Ktor server
     implementation(libs.ktor.server.core)
