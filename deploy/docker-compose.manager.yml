@@ -13,13 +13,17 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.1.0
+    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.2.0
     container_name: msh-manager
     restart: unless-stopped
     environment:
       # Optional known admin API key. Without it the manager creates one on first start,
       # prints it once and stores it in /var/lib/msh/initial-admin-token.
       MSH_ADMIN_TOKEN: "${MSH_ADMIN_TOKEN:-}"
+      # Optional Postgres backend, e.g.
+      # jdbc:postgresql://db:5432/shepherd?user=shepherd&password=...
+      # Empty keeps the SQLite file in /var/lib/msh.
+      MSH_DB_URL: "${MSH_DB_URL:-}"
     volumes:
       - "${MSH_CONFIG_PATH:-./msh.yaml}:/etc/msh/msh.yaml:ro"
       - "${MSH_DATA_PATH:-./msh-data}:/var/lib/msh"

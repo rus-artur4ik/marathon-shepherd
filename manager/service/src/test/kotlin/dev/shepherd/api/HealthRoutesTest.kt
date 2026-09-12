@@ -1,5 +1,6 @@
 package dev.shepherd.api
 
+import dev.shepherd.common.BuildInfo
 import dev.shepherd.configureServer
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.domain.provider.FakeDeviceProvider
@@ -78,7 +79,7 @@ class HealthRoutesTest {
             assertEquals(HttpStatusCode.OK, response.status)
             val body = response.bodyAsText()
             assertContains(body, "\"version\"")
-            assertContains(body, "0.1.0")
+            assertContains(body, BuildInfo.version)
             assertContains(body, "\"providersTotal\"")
             assertContains(body, "\"providersHealthy\"")
             assertContains(body, "\"providers\"")

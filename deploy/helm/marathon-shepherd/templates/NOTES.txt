@@ -1,0 +1,25 @@
+Marathon Shepherd {{ .Chart.AppVersion }} is starting as {{ include "marathon-shepherd.fullname" . }}.
+
+Reach the API:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "marathon-shepherd.fullname" . }} {{ .Values.service.port }}
+  export MSH_URL=http://localhost:{{ .Values.service.port }}
+
+{{ if or .Values.adminToken.value .Values.adminToken.existingSecret -}}
+The admin key is the one you provided in adminToken.
+{{- else -}}
+The manager created an admin key on first start and printed it once:
+
+  kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "marathon-shepherd.fullname" . }} | grep -A4 "admin API key"
+
+A copy is in /var/lib/msh/initial-admin-token inside the pod. Create a client per consumer
+with it, then delete that file (see docs/clients.md).
+{{- end }}
+
+  export MSH_TOKEN=<key>
+  mshctl health
+  mshctl devices
+{{ if not .Values.persistence.enabled }}
+WARNING: persistence is disabled. Sessions and the generated admin key are lost when the pod
+restarts. Set persistence.enabled=true, or point database.url at Postgres.
+{{- end }}

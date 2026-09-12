@@ -34,6 +34,7 @@ class ConfigExampleTest {
         assertEquals(90, config.registration.ttlSeconds)
         assertEquals(300, config.reconciliation.intervalSeconds)
         assertEquals(600, config.adapterTimeouts.acquireSeconds)
+        assertEquals(30, config.sessions.retentionDays)
         assertEquals(2, config.mcp.maxDevicesPerSession)
         assertEquals(900, config.mcp.idleTimeoutSeconds)
     }

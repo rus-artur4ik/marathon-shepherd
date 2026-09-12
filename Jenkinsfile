@@ -47,7 +47,7 @@ pipeline {
 
     stage('Unit tests') {
       steps {
-        sh './tests/run_tests.sh --only unit:kotlin,unit:jenkins'
+        sh './tests/run_tests.sh --only unit:kotlin,unit:jenkins,unit:python-client'
       }
       post {
         always {

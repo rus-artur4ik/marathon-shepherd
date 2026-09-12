@@ -46,7 +46,7 @@ package). List what exists:
 **The fast gate** — no Docker, no device, no Groovy. Run this before every push:
 
 ```bash
-./tests/run_tests.sh --only unit:kotlin
+./tests/run_tests.sh --only unit:kotlin,unit:python-client
 ```
 
 **Everything that does not need hardware:**

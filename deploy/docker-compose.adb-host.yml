@@ -42,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-adb
-    image: ghcr.io/rus-artur4ik/shepherd-adb:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-adb:0.2.0
     container_name: shepherd-adb
     networks:
       - shepherd-adb

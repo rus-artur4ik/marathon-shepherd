@@ -5,11 +5,14 @@ import kotlinx.serialization.Serializable
 /**
  * Shared REST contract between the Manager and any Adapter (adb, farm, …).
  *
- * Every adapter exposes the same four endpoints:
- *   GET  /health              → HealthResponse
- *   GET  /status              → PoolStatusResponse
- *   POST /acquire             → AcquireResponse
- *   DELETE /release/{leaseId} → 200 OK
+ * Every adapter exposes the same endpoints:
+ *   GET  /health                  → HealthResponse
+ *   GET  /status                  → PoolStatusResponse
+ *   POST /acquire                 → AcquireResponse
+ *   DELETE /release/{leaseId}     → 200 OK
+ *   POST /leases/{leaseId}/renew  → 200 OK, or 501 when the adapter cannot renew
+ *   GET  /leases                  → LeasesResponse, or 501 when it does not track them
+ *   GET  /metrics                 → Prometheus text
  *
  * The Manager owns session lifecycle state.
  * Adapters may keep the minimal local metadata required to release acquired resources safely.

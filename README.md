@@ -6,7 +6,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![JVM 21](https://img.shields.io/badge/jvm-21-437291)](https://adoptium.net/)
-[![Kotlin 2.2](https://img.shields.io/badge/kotlin-2.2-7F52FF)](https://kotlinlang.org/)
+[![Kotlin 2.4](https://img.shields.io/badge/kotlin-2.4-7F52FF)](https://kotlinlang.org/)
 [![CI](https://github.com/rus-artur4ik/marathon-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/rus-artur4ik/marathon-shepherd/actions/workflows/ci.yml)
 
 Android test devices are usually pinned to whichever machine happens to host them, so CI
@@ -21,18 +21,26 @@ It is built for [Marathon](https://marathonlabs.github.io/marathon/) — the shi
 step injects the leased adb servers straight into Marathon's Gradle configuration — but the
 REST API is runner-agnostic.
 
+Every caller has its own API key, role and quota, so CI jobs, developers, scripts and AI
+agents share one fleet without stepping on each other: keys are issued and revoked centrally,
+sessions are owned, and everything that happens is in an audit log and an event stream.
+
 > **Not affiliated with Marathon Labs.** "Marathon" is used descriptively to name the test
 > runner this project feeds devices to. See [NOTICE](NOTICE).
 
-> **Status: early.** Version 0.1.0; container images are published to GHCR.
-> The HTTP API and config schema may still change. See [CHANGELOG.md](CHANGELOG.md).
+> **Status: early.** Version 0.2.0; container images are published to GHCR.
+> The HTTP API and config schema may still change. See [CHANGELOG.md](CHANGELOG.md) —
+> 0.2.0 makes API keys mandatory, so callers written against 0.1.0 need one.
 
 ## Contents
 
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
+- [Manager API](#manager-api)
+- [Clients](#clients)
+- [Devices for AI agents](#devices-for-ai-agents)
 - [Configuration](#configuration)
-- [HTTP API](#http-api)
+- [Observability](#observability)
 - [Jenkins](#jenkins)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
@@ -47,7 +55,7 @@ REST API is runner-agnostic.
  ┌───────────────────────────────────────────┐
  │  CI / Jenkins / developer machine         │
  │                                           │
- │  mshctl · Jenkins pipeline · marathon     │
+ │  mshctl · Jenkins · Python · AI agent     │
  └──────────────┬────────────────────────────┘
                 │ HTTP :6037
                 ▼
@@ -114,14 +122,24 @@ Manager looks for `msh.yaml` in the current directory by default. Pass `--config
 sudo ln -sf "$PWD/manager/cli/build/install/mshctl/bin/mshctl" /usr/local/bin/mshctl
 ```
 
-**4. Verify and create a session**
+**4. Take the admin key the manager printed on first start**
+
+```bash
+export MSH_URL=http://localhost:6037
+export MSH_TOKEN=<the key printed once at startup, also in ~/.msh/initial-admin-token>
+mshctl clients create --name my-laptop --role user --max-devices 4   # a key per consumer
+```
+
+Set `MSH_ADMIN_TOKEN` before starting the manager to provision a known admin key instead.
+
+**5. Verify and create a session**
 
 ```bash
 mshctl health
 mshctl devices
-mshctl create --devices 2 --api 34
-mshctl list
-mshctl release --id sess_abc123
+mshctl create --devices 2 --api 34 --wait
+mshctl list --mine
+mshctl release sess_abc123
 ```
 
 ---
@@ -130,8 +148,8 @@ mshctl release --id sess_abc123
 
 > Images are published to the GitHub Container Registry for `linux/amd64` and
 > `linux/arm64`: `ghcr.io/rus-artur4ik/marathon-shepherd`, `shepherd-adb`, `shepherd-farm`
-> and `shepherd-cuttlefish`, each tagged with the release version (`0.1.0`), its minor line
-> (`0.1`) and `latest`. The examples pin `0.1.0`.
+> and `shepherd-cuttlefish`, each tagged with the release version (`0.2.0`), its minor line
+> (`0.2`) and `latest`. The examples pin `0.2.0`.
 > `deploy/Dockerfile.adb-server` is not published (it is a modified Ubuntu image — see
 > [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)), so the adb-server service builds from a clone.
 
@@ -153,9 +171,13 @@ providers:
 ```yaml
 services:
   manager:
-    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.1.0
+    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.2.0
     container_name: shepherd-manager
     restart: unless-stopped
+    environment:
+      # Optional. Without it the manager creates an admin key on first start, prints it
+      # once in the container log and keeps a copy in /var/lib/msh/initial-admin-token.
+      MSH_ADMIN_TOKEN: "${MSH_ADMIN_TOKEN:-}"
     volumes:
       - "./msh.yaml:/etc/msh/msh.yaml:ro"
       - msh-data:/var/lib/msh
@@ -176,6 +198,8 @@ volumes:
 ```bash
 docker compose up -d
 curl -sf http://localhost:6037/live
+docker compose logs manager | grep -A4 "admin API key"   # the key, printed once
+docker exec shepherd-manager mshctl --manager http://localhost:6037 --token <key> health
 ```
 
 Reload config at runtime without restart:
@@ -219,7 +243,7 @@ services:
       - "5038:5037"
 
   shepherd-adb:
-    image: ghcr.io/rus-artur4ik/shepherd-adb:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-adb:0.2.0
     container_name: shepherd-adb
     networks:
       - shepherd
@@ -276,7 +300,7 @@ services:
       start_period: 60s
 
   shepherd-farm:
-    image: ghcr.io/rus-artur4ik/shepherd-farm:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-farm:0.2.0
     container_name: shepherd-farm
     networks:
       - shepherd
@@ -309,7 +333,7 @@ By default, manager publishes the host from `provider.url`. Use `accessHost` in 
 ```yaml
 services:
   shepherd-cuttlefish:
-    image: ghcr.io/rus-artur4ik/shepherd-cuttlefish:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-cuttlefish:0.2.0
     container_name: shepherd-cuttlefish
     privileged: true
     devices:
@@ -341,22 +365,48 @@ docker compose up -d
 
 ---
 
+## Quick Start — Kubernetes
+
+```bash
+helm install shepherd deploy/helm/marathon-shepherd \
+  --namespace shepherd --create-namespace \
+  --set-file config.content=./msh.yaml
+```
+
+The chart deploys the manager only: adapters run on the machines that hold the devices. It
+runs a single replica on purpose — the manager locks its database at startup, and a second one
+exits — and keeps `msh.yaml` in a Secret. Point `database.url` at Postgres to keep state there
+instead of the volume. See [deploy/helm/marathon-shepherd/README.md](deploy/helm/marathon-shepherd/README.md).
+
 ## Manager API
+
+Every `/api/v1/...` call and `/mcp` carry `Authorization: Bearer <key>`. The probes, metrics
+and documentation endpoints are public. The full description is served at `/openapi.yaml`,
+with Swagger UI at `/docs`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/sessions` | Create session and enqueue allocation |
-| `POST` | `/api/v1/sessions/{id}/wait` | Wait for queued session progress and refresh heartbeat |
-| `GET` | `/api/v1/sessions` | List active sessions |
-| `GET` | `/api/v1/sessions?status=READY` | List sessions filtered by status |
-| `GET` | `/api/v1/sessions/{id}` | Get session |
-| `DELETE` | `/api/v1/sessions/{id}` | Release session |
-| `GET` | `/api/v1/devices` | Aggregate provider inventory |
-| `GET` | `/live` | Manager process liveness |
-| `GET` | `/health` | Manager readiness + provider health |
-| `GET` | `/api/v1/config` | Active config |
-| `PUT` | `/api/v1/config` | Update config (409 if a removed provider has active sessions) |
-| `POST` | `/api/v1/config/reload` | Reload config from disk |
+| `POST` | `/api/v1/sessions` | Create a session: `READY`, or `PENDING` in the queue |
+| `POST` | `/api/v1/sessions/{id}/wait` | Long-poll a queued session (≤ 30 s per call) |
+| `POST` | `/api/v1/sessions/{id}/heartbeat` | Keep a session with an idle timeout alive |
+| `POST` | `/api/v1/sessions/{id}/extend` | Move the expiry, on providers that renew leases |
+| `GET` | `/api/v1/sessions` | List sessions (`status`, `owner=me`) |
+| `GET` | `/api/v1/sessions/{id}` | One session |
+| `DELETE` | `/api/v1/sessions/{id}` | Release a session |
+| `GET` | `/api/v1/devices` | Devices and pools (`state`, `provider`, `deviceType`, `api`, `label`, `refresh`) |
+| `GET` | `/api/v1/devices/{id}` | One device |
+| `PUT`, `DELETE` | `/api/v1/devices/{id}/maintenance` | Take a device out of allocation, or return it (admin) |
+| `GET` | `/api/v1/events` | Session, device, provider and lease events (SSE, `Last-Event-ID`) |
+| `GET` | `/api/v1/providers` | Providers from `msh.yaml` and self-registered adapters |
+| `POST` | `/api/v1/providers/register` | Adapter self-registration (`provider` role) |
+| `DELETE` | `/api/v1/providers/{name}` | Remove a registration (admin) |
+| `GET` | `/api/v1/me` | The calling client, its quota and its usage |
+| `GET` | `/api/v1/audit` | Audit log |
+| `GET`, `POST`, `PATCH`, `DELETE` | `/api/v1/admin/clients[/{id}[/rotate]]` | API clients and keys (admin) |
+| `GET`, `PUT` | `/api/v1/config`, `POST /api/v1/config/reload` | Configuration (admin) |
+| `POST` | `/mcp` | Model Context Protocol endpoint for AI agents |
+| `GET` | `/live`, `/ready`, `/health`, `/metrics` | Probes and Prometheus metrics (public) |
+| `GET` | `/openapi.yaml`, `/docs` | API description and Swagger UI (public) |
 
 **Create session — request body:**
 
@@ -406,6 +456,44 @@ If no registered devices can ever satisfy the request, the manager fails immedia
 ```
 
 `POST /api/v1/sessions/{id}/wait` long-polls the queue, refreshes the session heartbeat, and returns the updated session payload. The manager allocates the head of the queue as soon as at least one matching device becomes free.
+
+## Clients
+
+| Client | For |
+|--------|-----|
+| [`mshctl`](manager/cli) | Operators and scripts: sessions, devices, providers, clients, audit, events |
+| [`manager/client`](manager/client) | Kotlin and the JVM: `ShepherdClient`, with `acquire` and `withSession` |
+| [`clients/python`](clients/python) | Python 3.9+, no dependencies: `with client.session(...)`, plus a pytest fixture |
+| [MCP](docs/mcp.md) | AI agents, through `/mcp` or the `shepherd-mcp` binary |
+| HTTP | Everything else: `curl -H "Authorization: Bearer $MSH_TOKEN"` |
+
+[docs/clients.md](docs/clients.md) covers issuing keys, the session lifecycle and an example
+for each client.
+
+## Devices for AI agents
+
+The manager speaks the [Model Context Protocol](https://modelcontextprotocol.io), so an agent
+can list, lease and return devices itself:
+
+```bash
+claude mcp add --transport http shepherd https://shepherd.example.com/mcp \
+  --header "Authorization: Bearer msh_..."
+```
+
+`shepherd-mcp` does the same over stdio for hosts that start MCP servers as processes, and
+releases whatever it leased when the agent goes away. Agent sessions are capped, short-lived
+and reclaimed when the agent stops checking in. See [docs/mcp.md](docs/mcp.md).
+
+## Observability
+
+The manager and every adapter expose Prometheus metrics at `/metrics`: sessions by status,
+queue depth and wait times, devices per provider and state, allocation outcomes, adapter call
+latency, plus JVM and HTTP metrics. `/health` reports provider health and pool sizes from the
+background poller, and `/ready` reports whether the manager can serve the API.
+
+[deploy/observability](deploy/observability) has a Grafana dashboard, Prometheus alert rules
+and a scrape config, with a table of every metric. `/metrics` is public, so keep the port on a
+private network.
 
 ## Adapter API
 
@@ -464,7 +552,9 @@ providers:
 |-----------------|---------|-------------|
 | `--config <path>` / `MSH_CONFIG` | `msh.yaml` in CWD | Config file path |
 | `MSH_PORT` | `6037` | HTTP port |
-| `MSH_DATA_DIR` | `~/.msh` | SQLite state directory |
+| `MSH_DATA_DIR` | `~/.msh` | State directory: SQLite database, generated admin key, lock file |
+| `MSH_ADMIN_TOKEN` | _(generated)_ | Known admin API key. Without it the manager creates one on first start, prints it once and writes it to `<MSH_DATA_DIR>/initial-admin-token` |
+| `MSH_DB_URL` | _(SQLite)_ | `jdbc:postgresql://...` to keep state in Postgres. One manager per database either way: the second one exits |
 
 Provider config note:
 - `accessHost` is optional.
@@ -478,6 +568,12 @@ Provider config note:
 | `ADAPTER_PORT` | `7037` | HTTP port |
 | `ADAPTER_ADB_PORT` | `5037` / `6520` | Upstream adb daemon port used by adapters that proxy or expose adb |
 | `ADAPTER_SECRET` | _(blank = no auth)_ | Bearer token; blank for local dev only |
+| `MSH_MANAGER_URL` | _(none)_ | Register with this manager instead of being listed in its `msh.yaml` |
+| `MSH_REGISTRATION_TOKEN` | _(none)_ | API key with the `provider` role, for registration |
+| `ADAPTER_PUBLIC_URL` | _(none)_ | How the manager reaches this adapter; required when registering |
+| `ADAPTER_NAME` | `<hostname>-<type>` | Provider name to register under |
+| `ADAPTER_ACCESS_HOST` | _(host of the public URL)_ | Direct device-access host, when it differs |
+| `MSH_REGISTRATION_INTERVAL_SECONDS` | `30` | How often to heartbeat the registration |
 
 Recommendation:
 - For dockerized `shepherd-adb` and `shepherd-farm` hosts, publish the upstream adb daemon on host port `5038` and set `ADAPTER_ADB_PORT=5038`.
@@ -486,6 +582,7 @@ Recommendation:
 | Variable | Adapter | Default | Description |
 |----------|---------|---------|-------------|
 | `ADB_LEASES_PATH` | adb | `~/.msh/adb-leases.json` | Persistent physical-device lease state |
+| `ADB_DEVICE_LABELS_FILE` | adb | _(none)_ | JSON file mapping serial → labels, which sessions can then ask for |
 | `ADB_PROXY_PORT_RANGE` | adb | _(ephemeral)_ | Lease-scoped adb proxy ports that must be reachable by Marathon |
 | `FARM_SERVER_HOST` | farm | `127.0.0.1` | Local farm-server host |
 | `FARM_SERVER_PORT` | farm | `8080` | Local farm-server port |
@@ -589,7 +686,7 @@ docker build -f deploy/Dockerfile.shepherd-farm       -t "$NS"/shepherd-farm:lat
 docker build -f deploy/Dockerfile.shepherd-cuttlefish -t "$NS"/shepherd-cuttlefish:latest .
 
 # Or push all four to your own registry namespace in one go:
-MSH_REGISTRY_NAMESPACE="$NS" ./scripts/publish_dockerhub.sh --tag 0.1.0
+MSH_REGISTRY_NAMESPACE="$NS" ./scripts/publish_dockerhub.sh --tag 0.2.0
 
 docker push "$NS"/marathon-shepherd:latest
 docker push "$NS"/shepherd-adb:latest
@@ -654,10 +751,10 @@ What it validates per image:
 
 Override images to test a specific tag:
 ```bash
-MSH_MANAGER_IMAGE="$NS"/marathon-shepherd:0.1.0 \
-MSH_SHEPHERD_ADB_IMAGE="$NS"/shepherd-adb:0.1.0 \
-MSH_SHEPHERD_FARM_IMAGE="$NS"/shepherd-farm:0.1.0 \
-MSH_SHEPHERD_CUTTLEFISH_IMAGE="$NS"/shepherd-cuttlefish:0.1.0 \
+MSH_MANAGER_IMAGE="$NS"/marathon-shepherd:0.2.0 \
+MSH_SHEPHERD_ADB_IMAGE="$NS"/shepherd-adb:0.2.0 \
+MSH_SHEPHERD_FARM_IMAGE="$NS"/shepherd-farm:0.2.0 \
+MSH_SHEPHERD_CUTTLEFISH_IMAGE="$NS"/shepherd-cuttlefish:0.2.0 \
 tests/component/docker/smoke_docker.sh
 ```
 
@@ -745,14 +842,20 @@ Pinned AndroidX test stack override for cached APKs: `core 1.7.0`, `ext 1.3.0`, 
 
 ```
 adapter/
-  api/                  Shared adapter contract, auth, server bootstrap
+  contract/             Adapter wire types, shared with the manager
+  api/                  Shared adapter runtime: routes, auth, metrics, self-registration
   shepherd-adb/         Physical-device adapter
   shepherd-farm/        Emulator adapter
   shepherd-cuttlefish/  Cuttlefish adapter backed by Cloud Orchestrator REST
 manager/
-  service/              REST API, session lifecycle, SQLite state
+  protocol/             Manager API wire types, shared by service, clients and MCP
+  service/              REST API, MCP endpoint, session lifecycle, SQLite or Postgres state
+  client/               Kotlin client library
   cli/                  mshctl operator CLI
-deploy/                 Production Dockerfiles, host compose files, msh.yaml.example
+  mcp/                  MCP tools and the shepherd-mcp stdio server
+clients/python/         Dependency-free Python client
+docs/                   Client guide, MCP guide, roadmap
+deploy/                 Dockerfiles, host compose files, Helm chart, msh.yaml.example, observability
 vars/                   Jenkins Shared Library steps
 tests/                  Unit, component, integration, e2e, scale and Jenkins coverage
   component/docker/     Test-only images and the smoke compose stack
@@ -765,13 +868,15 @@ Jenkinsfile             CI pipeline for this repository
 `deploy/` holds what you deploy; `tests/component/docker/` holds what the test suite
 builds. They are deliberately separate — do not cross-reference them.
 
-**Stack:** Kotlin 2.2 · JVM 21 · Ktor 2.3 · Exposed · SQLite · kaml · Clikt
+**Stack:** Kotlin 2.4 · JVM 21 · Ktor 3.5 · Exposed · SQLite or Postgres · Micrometer · kaml · Clikt · MCP Kotlin SDK
 
 ## Security
 
-The Manager API is **unauthenticated by design** and must not be exposed to an untrusted
-network — anyone who can reach it can allocate every device in the fleet. Adapters
-authenticate with bearer tokens.
+Every `/api/v1` call and the MCP endpoint need an API key, and sessions belong to the client
+that created them. What stays open: `/live`, `/ready`, `/health`, `/metrics` and the API docs,
+which describe the fleet, and the per-lease adb proxies, which are unauthenticated for the
+duration of a lease. There is no TLS in the manager, so terminate it in front and keep the
+port on a private network. Adapters authenticate with bearer tokens.
 
 Read [SECURITY.md](SECURITY.md) for the full threat model and trust boundaries before
 deploying, and to report a vulnerability.

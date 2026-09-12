@@ -32,6 +32,7 @@ import dev.shepherd.infra.audit.StoreAuditTrail
 import dev.shepherd.infra.auth.AccessControl
 import dev.shepherd.infra.auth.ClientStore
 import dev.shepherd.infra.config.ConfigStore
+import dev.shepherd.infra.db.InstanceLock
 import dev.shepherd.infra.db.ShepherdDatabase
 import dev.shepherd.infra.devices.MaintenanceStore
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
@@ -68,6 +69,7 @@ import org.slf4j.LoggerFactory
 import java.io.File
 import java.time.Duration
 import java.time.Instant
+import kotlin.system.exitProcess
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 
 private val logger = LoggerFactory.getLogger("dev.shepherd.Application")
@@ -76,7 +78,10 @@ private const val DEFAULT_STATE_STORE_NAME: String = "msh.db"
 private const val CLEANUP_INTERVAL_MS: Long = 60_000L
 private const val ADAPTER_CONNECT_TIMEOUT_MS: Long = 5_000L
 private const val INITIAL_ADMIN_TOKEN_FILE: String = "initial-admin-token"
-private const val CLEANUPS_PER_AUDIT_PRUNE: Int = 60
+private const val CLEANUPS_PER_RETENTION_SWEEP: Int = 60
+
+/** Exit code when another manager already holds the database. */
+private const val EXIT_DATABASE_IN_USE: Int = 3
 
 /** Probe and scrape paths are hit every few seconds; logging each call buries real traffic. */
 private val QUIET_PATHS: Set<String> = setOf("/live", "/ready", "/health", "/metrics")
@@ -98,7 +103,20 @@ fun main(args: Array<String>) {
     File(dataDir).mkdirs()
 
     val configStore = ConfigStore(configPath)
-    val database = ShepherdDatabase.sqlite(resolveStateStorePath(dataDir))
+    // MSH_DB_URL points at Postgres; without it the state lives in a SQLite file in the data directory.
+    val database = ShepherdDatabase.open(readStringEnv("MSH_DB_URL"), resolveStateStorePath(dataDir))
+    val instanceLock: InstanceLock = try {
+        InstanceLock.acquire(database, File(dataDir))
+    } catch (inUse: IllegalStateException) {
+        logger.error(inUse.message)
+        exitProcess(EXIT_DATABASE_IN_USE)
+    }
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            instanceLock.close()
+            database.close()
+        }
+    )
     val stateStore = StateStore(database)
     val auditStore = AuditStore(database)
     val audit = StoreAuditTrail(auditStore)
@@ -192,8 +210,10 @@ fun main(args: Array<String>) {
                 logger.error("Session cleanup failed", e)
             }
             cleanups += 1
-            if (cleanups % CLEANUPS_PER_AUDIT_PRUNE == 0) {
-                pruneAuditLog(auditStore, providerRegistry.currentConfig().audit.retentionDays)
+            if (cleanups % CLEANUPS_PER_RETENTION_SWEEP == 0) {
+                val config = providerRegistry.currentConfig()
+                pruneAuditLog(auditStore, config.audit.retentionDays)
+                pruneFinishedSessions(stateStore, config.sessions.retentionDays)
             }
         }
     }
@@ -243,6 +263,17 @@ private suspend fun pruneAuditLog(auditStore: AuditStore, retentionDays: Long) {
         }
     } catch (e: Exception) {
         logger.warn("Audit log pruning failed: {}", e.message)
+    }
+}
+
+private suspend fun pruneFinishedSessions(stateStore: StateStore, retentionDays: Long) {
+    try {
+        val removed = stateStore.pruneFinishedSessions(Instant.now().minus(Duration.ofDays(retentionDays)))
+        if (removed > 0) {
+            logger.info("Deleted {} session(s) that ended more than {} days ago", removed, retentionDays)
+        }
+    } catch (e: Exception) {
+        logger.warn("Session retention sweep failed: {}", e.message)
     }
 }
 

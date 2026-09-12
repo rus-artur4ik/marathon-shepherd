@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.javatime.timestamp
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
@@ -320,6 +321,23 @@ class StateStore(val db: ShepherdDatabase) {
         }
     }
 
+    /**
+     * Deletes sessions that ended before [before], with their lease rows. Sessions are kept for a
+     * while after they end so that people can look up what a job held; after that the row is only
+     * taking space, and the audit log still has the trail.
+     */
+    suspend fun pruneFinishedSessions(before: Instant): Int = db.tx {
+        val finished: List<String> = Sessions.selectAll().where {
+            (Sessions.status inList FINISHED_STATUSES) and
+                ((Sessions.releasedAt less before) or (Sessions.releasedAt.isNull() and (Sessions.createdAt less before)))
+        }.map { row -> row[Sessions.id] }
+        finished.chunked(PRUNE_BATCH).forEach { batch ->
+            SessionLeases.deleteWhere { sessionId inList batch }
+            Sessions.deleteWhere { id inList batch }
+        }
+        finished.size
+    }
+
     private fun rowToSession(row: org.jetbrains.exposed.sql.ResultRow): Session {
         return Session(
             id = row[Sessions.id],
@@ -343,5 +361,14 @@ class StateStore(val db: ShepherdDatabase) {
             deviceIds = row[Sessions.deviceIdsJson]?.let { text -> json.decodeFromString<List<String>>(text) } ?: emptyList(),
             devices = row[Sessions.devicesJson]?.let { text -> json.decodeFromString<List<SessionDevice>>(text) } ?: emptyList()
         )
+    }
+
+    private companion object {
+        /** Statuses a session never leaves again. */
+        val FINISHED_STATUSES: List<String> =
+            listOf(SessionStatus.RELEASED, SessionStatus.EXPIRED, SessionStatus.FAILED).map { status -> status.name }
+
+        /** Deleting ids in batches keeps one statement from carrying thousands of parameters. */
+        const val PRUNE_BATCH: Int = 500
     }
 }

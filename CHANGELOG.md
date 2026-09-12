@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-12
+
+Marathon Shepherd grows from a CI device broker into a device manager: authenticated access
+for many clients, a control plane over individual devices, client libraries, an MCP server so
+AI agents can lease devices, and the operational pieces to run it as a service.
+
+### Breaking
+
+- **The Manager API requires an API key.** Every `/api/v1/...` call and `/mcp` need
+  `Authorization: Bearer <key>`; `/live`, `/ready`, `/health`, `/metrics` and the API docs
+  stay public. On first start the manager creates an admin key, prints it once and writes it
+  to `<dataDir>/initial-admin-token`; `MSH_ADMIN_TOKEN` provisions a known key instead.
+  Existing callers need a key of their own — `mshctl clients create --name ci --role user`.
+- Sessions belong to the client that created them: only that client or an admin may wait on,
+  extend or release one.
+- `mshctl create --api` no longer defaults to `34`. Without it, any API level matches.
+- The Jenkins step takes `credentialsId` (or `MSH_TOKEN`) and reads the key inside the shell,
+  so it never reaches the build log.
+
+### Added
+
+- **Identity and quotas.** Named clients with roles (`admin`, `user`, `viewer`, `provider`),
+  per-client quotas for concurrent devices, session lifetime and queue priority, an audit log
+  at `GET /api/v1/audit`, `GET /api/v1/me`, and an admin API to create, update, rotate and
+  revoke keys.
+- **Device-level control plane.** `GET /api/v1/devices` lists every device with its state,
+  holder and labels; `GET /api/v1/devices/{id}` shows one; admins can put a device into
+  maintenance. Sessions can ask for specific device ids or labels, carry a name, metadata, a
+  priority and an idle timeout, and report the devices they hold.
+- `POST /api/v1/sessions/{id}/heartbeat` and `/extend`; READY sessions with an idle timeout are
+  released when nobody checks in.
+- **Adapter self-registration.** An adapter with a `provider` key registers itself and
+  heartbeats (`MSH_MANAGER_URL`, `MSH_REGISTRATION_TOKEN`, `ADAPTER_PUBLIC_URL`);
+  `GET/DELETE /api/v1/providers` lists and removes registrations.
+- **Events.** `GET /api/v1/events` streams session, device, provider and lease events as
+  server-sent events, with `Last-Event-ID` replay.
+- **Observability.** Prometheus metrics on the manager and every adapter, a background fleet
+  poller behind `/health` and the device list, a `/ready` probe, an OpenAPI document at
+  `/openapi.yaml` with Swagger UI at `/docs`, and a Grafana dashboard plus alert rules in
+  `deploy/observability`.
+- **Clients.** `manager/client` (Kotlin) with queue-aware `acquire`/`withSession` helpers and a
+  reconnecting event flow; `clients/python`, a dependency-free client for Python 3.9+ with a
+  session context manager and a pytest fixture; `mshctl` rebuilt on the Kotlin client with
+  commands for devices, events, providers, clients, audit and config.
+- **MCP server for agents.** `/mcp` (stateless Streamable HTTP) inside the manager and a
+  `shepherd-mcp` stdio binary, both offering list/acquire/wait/get/extend/release tools with
+  guardrails: at most two devices per session, short lifetimes and an idle timeout, and
+  release-on-exit for the stdio server. See `docs/mcp.md`.
+- Scheduler policies: strict FIFO (default) or priority order, set with `scheduler.policy`.
+- Orphaned adapter leases are reclaimed by a two-pass reconciliation.
+- **Operations.** Optional Postgres with `MSH_DB_URL` (SQLite stays the default), a
+  single-manager lock on the database, retention for finished sessions and audit entries, and
+  a Helm chart in `deploy/helm`.
+- Adapters report individual devices, accept device selection and labels
+  (`ADB_DEVICE_LABELS_FILE`), and support lease renewal and listing.
+
+### Changed
+
+- Kotlin 2.4 and Ktor 3.5. Wire types moved into `adapter/contract` and `manager/protocol`, so
+  the service, clients, CLI and MCP server share one definition of the API.
+- `/health` and `/api/v1/devices` answer from a background snapshot instead of fanning out to
+  every adapter per request; `?refresh=true` still polls.
+- The manager and adapters report the version from the build instead of a constant.
+- The manager image also carries `mshctl` and `shepherd-mcp`.
+
+### Fixed
+
+- A physical rack whose devices were all busy answered `503` instead of queueing the session:
+  providers that list devices now count busy ones as registered.
+- Error bodies keep their `{"error": ...}` shape on routes that negotiate another format.
+
+### Security
+
+- API keys are stored only as SHA-256 digests and shown once; see the rewritten
+  [SECURITY.md](SECURITY.md) for the threat model, including what stays public and why TLS
+  belongs in front of the manager.
+
 ## [0.1.0] — 2026-09-10
 
 First public release. Everything below describes the state at the point the repository
@@ -72,5 +149,6 @@ Issues found in the pre-publication audit:
 - Docker builder stages run on the build host's native platform, so multi-arch images
   never compile Kotlin under emulation.
 
-[Unreleased]: https://github.com/rus-artur4ik/marathon-shepherd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rus-artur4ik/marathon-shepherd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rus-artur4ik/marathon-shepherd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rus-artur4ik/marathon-shepherd/releases/tag/v0.1.0

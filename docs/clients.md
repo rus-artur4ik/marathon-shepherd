@@ -126,8 +126,9 @@ with client.session(max_devices=2, api=">=34", name="nightly #42", idle_timeout_
 
 The context manager waits through the queue, heartbeats in the background when
 `idle_timeout_seconds` is set, and releases on exit — including on exceptions and Ctrl+C.
-Errors raise `ShepherdError` subclasses (`Unauthorized`, `Forbidden`, `NotFound`, `Conflict`,
-`QuotaExceeded`, `Unavailable`). A pytest plugin provides a `shepherd_session` fixture
+Errors raise `ShepherdError` subclasses (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`,
+`Conflict`, `QuotaExceeded`, `Unavailable`), plus `QueueTimeout` and `SessionFailed` from the
+helpers. A pytest plugin provides a `shepherd_session` fixture
 configured from `MSH_URL`, `MSH_TOKEN`, `MSH_DEVICES`, `MSH_API` and `MSH_DEVICE_TYPE`.
 
 ## Plain HTTP

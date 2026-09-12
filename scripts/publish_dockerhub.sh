@@ -10,8 +10,8 @@
 #
 # Examples:
 #
-#   MSH_REGISTRY_NAMESPACE=ghcr.io/acme ./scripts/publish_dockerhub.sh --tag 0.1.0
-#   ./scripts/publish_dockerhub.sh --namespace myuser --tag 0.1.0 --latest --dry-run
+#   MSH_REGISTRY_NAMESPACE=ghcr.io/acme ./scripts/publish_dockerhub.sh --tag 0.2.0
+#   ./scripts/publish_dockerhub.sh --namespace myuser --tag 0.2.0 --latest --dry-run
 #
 set -euo pipefail
 

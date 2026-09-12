@@ -68,6 +68,10 @@ providers:
 # audit:
 #   retentionDays: 90
 
+# Finished sessions (released, expired, failed) are deleted this long after they end.
+# sessions:
+#   retentionDays: 30
+
 # The MCP endpoint at /mcp, where AI agents lease devices with their API key (docs/mcp.md).
 # Their sessions are small, short and released soon after the agent stops checking in,
 # on top of the key's quota.

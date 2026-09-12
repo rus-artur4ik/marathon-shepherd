@@ -1,0 +1,92 @@
+# The manager only. Adapters run on the machines that hold the devices, which is rarely
+# a Kubernetes node, so this chart deploys neither them nor a database.
+
+image:
+  repository: ghcr.io/rus-artur4ik/marathon-shepherd
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# msh.yaml. It holds adapter secrets, so it is kept in a Secret.
+config:
+  # Set to false and name an existingSecret to manage the file yourself.
+  create: true
+  existingSecret: ""
+  key: msh.yaml
+  content: |
+    providers:
+      - name: "device-rack-1"
+        url: "http://192.168.50.100:7037"
+        secret: "change-me"
+
+# MSH_ADMIN_TOKEN. Leave empty and the manager creates an admin key on first start,
+# prints it once and writes it to <dataDir>/initial-admin-token.
+adminToken:
+  value: ""
+  existingSecret: ""
+  key: admin-token
+
+# MSH_DB_URL. Empty keeps the embedded SQLite database in the data directory; set a
+# JDBC URL such as jdbc:postgresql://postgres:5432/shepherd to use Postgres instead.
+# Only one manager may run against a database: the chart never sets more than one replica.
+database:
+  url: ""
+  existingSecret: ""
+  key: url
+
+# The data directory: SQLite state and the generated admin key.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+service:
+  type: ClusterIP
+  port: 6037
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: shepherd.example.com
+  path: /
+  pathType: Prefix
+  tls: []
+
+# Scraped at /metrics, which is public: keep the manager off untrusted networks.
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+  labels: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+extraEnv: []
+nodeSelector: {}
+tolerations: []
+affinity: {}

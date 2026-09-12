@@ -20,6 +20,8 @@ data class ShepherdConfig(
     val quotas: QuotasConfig = QuotasConfig(),
     /** Audit log retention. */
     val audit: AuditConfig = AuditConfig(),
+    /** How long finished sessions are kept. */
+    val sessions: SessionsConfig = SessionsConfig(),
     /** How queued sessions are ordered. */
     val scheduler: SchedulerConfig = SchedulerConfig(),
     /** Adapters that register themselves instead of being listed under [providers]. */
@@ -123,6 +125,16 @@ data class QuotaConfig(
     val maxPriority: Int? = null
 ) {
     fun toQuota(): ClientQuota = ClientQuota(maxDevices, maxSessionLifetimeSeconds, maxPriority)
+}
+
+@Serializable
+data class SessionsConfig(
+    /** Sessions that were released, expired or failed are deleted this long after they ended. */
+    val retentionDays: Long = 30
+) {
+    init {
+        require(retentionDays > 0) { "sessions.retentionDays must be positive" }
+    }
 }
 
 @Serializable

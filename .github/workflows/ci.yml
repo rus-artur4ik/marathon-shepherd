@@ -99,6 +99,10 @@ jobs:
       - name: Kotlin unit tier through the runner
         run: ./tests/run_tests.sh --only unit:kotlin
 
+      # The Python client ships to users; its suite needs no Gradle, Docker or devices.
+      - name: Python client tier through the runner
+        run: ./tests/run_tests.sh --only unit:python-client
+
   lint:
     name: Static checks
     runs-on: ubuntu-latest
@@ -131,4 +135,4 @@ jobs:
 
       - name: Python syntax
         run: |
-          python3 -m compileall -q tests/ scripts/ 2>&1
+          python3 -m compileall -q tests/ scripts/ clients/python/ 2>&1

@@ -45,7 +45,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.shepherd-farm
-    image: ghcr.io/rus-artur4ik/shepherd-farm:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-farm:0.2.0
     container_name: shepherd-farm
     networks:
       - shepherd-farm

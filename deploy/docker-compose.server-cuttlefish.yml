@@ -30,7 +30,7 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock"
 
   shepherd-cuttlefish:
-    image: ghcr.io/rus-artur4ik/shepherd-cuttlefish:0.1.0
+    image: ghcr.io/rus-artur4ik/shepherd-cuttlefish:0.2.0
     container_name: shepherd-cuttlefish
     depends_on:
       cuttlefish:
@@ -55,7 +55,7 @@ services:
       retries: 3
 
   manager:
-    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.1.0
+    image: ghcr.io/rus-artur4ik/marathon-shepherd:0.2.0
     container_name: msh-manager
     depends_on:
       shepherd-cuttlefish:

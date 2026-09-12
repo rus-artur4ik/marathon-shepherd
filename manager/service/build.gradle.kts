@@ -37,8 +37,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kaml)
 
-    // SQLite
+    // SQLite by default; Postgres when MSH_DB_URL asks for it
     implementation(libs.sqlite.jdbc)
+    implementation(libs.postgresql)
+    implementation(libs.hikari)
     implementation(libs.exposed.core)
     implementation(libs.exposed.jdbc)
     implementation(libs.exposed.java.time)
@@ -54,6 +56,7 @@ dependencies {
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.lincheck)
+    testImplementation(libs.embedded.postgres)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

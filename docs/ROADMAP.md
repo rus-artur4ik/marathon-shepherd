@@ -92,9 +92,9 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 6 — Operations
 
-- [ ] Optional Postgres (`MSH_DB_URL`) with a pooled connection; SQLite stays default
-- [ ] Single-instance lock (advisory lock on Postgres, file lock on SQLite)
-- [ ] Retention for finished sessions and audit records
-- [ ] Helm chart in `deploy/helm`
-- [ ] Compose files, Dockerfiles and test harnesses updated for auth
-- [ ] README, SECURITY.md, CHANGELOG and version bump to 0.2.0
+- [x] Optional Postgres (`MSH_DB_URL`) with a pooled connection; SQLite stays default
+- [x] Single-instance lock (advisory lock on Postgres, file lock on SQLite)
+- [x] Retention for finished sessions and audit records
+- [x] Helm chart in `deploy/helm`
+- [x] Compose files, Dockerfiles and test harnesses updated for auth
+- [x] README, SECURITY.md, CHANGELOG and version bump to 0.2.0
