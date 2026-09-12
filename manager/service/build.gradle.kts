@@ -11,6 +11,10 @@ application {
 
 dependencies {
     implementation(project(":manager:protocol"))
+    // The MCP tools served at /mcp. The binary's stderr logger stays out; the manager logs with logback.
+    implementation(project(":manager:mcp")) {
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+    }
 
     // Ktor server
     implementation(libs.ktor.server.core)
@@ -46,6 +50,7 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.mock)
     testImplementation(project(":manager:client"))
+    testImplementation(libs.mcp.kotlin.sdk.client)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.lincheck)

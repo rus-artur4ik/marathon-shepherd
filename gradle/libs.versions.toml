@@ -60,6 +60,7 @@ embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = 
 
 # Logging
 logback = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 
 # CLI

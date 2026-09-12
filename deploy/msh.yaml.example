@@ -67,3 +67,14 @@ providers:
 
 # audit:
 #   retentionDays: 90
+
+# The MCP endpoint at /mcp, where AI agents lease devices with their API key (docs/mcp.md).
+# Their sessions are small, short and released soon after the agent stops checking in,
+# on top of the key's quota.
+# mcp:
+#   enabled: true
+#   maxDevicesPerSession: 2
+#   defaultTtlSeconds: 1800
+#   maxTtlSeconds: 14400
+#   idleTimeoutSeconds: 900           # released after this long without get_session
+#   maxWaitSeconds: 60                # longest one tool call waits for busy devices

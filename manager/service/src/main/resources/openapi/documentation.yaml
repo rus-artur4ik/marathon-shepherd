@@ -34,6 +34,8 @@ tags:
     description: Adapters, configured or self-registered.
   - name: events
     description: Live stream of what the manager does.
+  - name: mcp
+    description: Model Context Protocol endpoint for AI agents
   - name: operations
     description: Probes, metrics and this document.
 paths:
@@ -807,6 +809,37 @@ paths:
             text/event-stream:
               schema:
                 type: string
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcp
+      summary: Model Context Protocol (Streamable HTTP, stateless)
+      description: |
+        JSON-RPC 2.0 messages from an MCP client such as Claude Code. Each request is handled on
+        its own and answered with JSON; there is no event stream and no Mcp-Session-Id. The tools
+        act as the calling key's client: list_devices, acquire_devices, wait_for_session,
+        get_session, list_my_sessions, extend_session and release_session. Sessions opened here
+        follow the `mcp` limits in msh.yaml. See docs/mcp.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A JSON-RPC 2.0 request or notification.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "200":
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema:
+                type: object
+        "202":
+          description: A notification was accepted; there is no body.
+        "404":
+          description: The endpoint is turned off (`mcp.enabled` is false).
 components:
   securitySchemes:
     bearerAuth:

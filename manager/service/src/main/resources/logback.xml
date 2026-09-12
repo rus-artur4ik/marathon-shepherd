@@ -12,4 +12,11 @@
     <logger name="dev.shepherd" level="DEBUG"/>
     <logger name="io.ktor" level="INFO"/>
     <logger name="org.jetbrains.exposed" level="INFO"/>
+
+    <!-- /mcp builds a server per request; the SDK logs every tool it registers at INFO. -->
+    <logger name="io.modelcontextprotocol" level="WARN"/>
+    <logger name="FeatureRegistry[Tool]" level="WARN"/>
+    <logger name="FeatureRegistry[Resource]" level="WARN"/>
+    <logger name="FeatureRegistry[Prompt]" level="WARN"/>
+    <logger name="FeatureRegistry[ResourceTemplate]" level="WARN"/>
 </configuration>

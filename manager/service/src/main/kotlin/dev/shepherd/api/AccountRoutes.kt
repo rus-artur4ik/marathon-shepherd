@@ -1,12 +1,9 @@
 package dev.shepherd.api
 
+import dev.shepherd.ManagerServices
 import dev.shepherd.api.dto.toDto
-import dev.shepherd.domain.SessionManager
 import dev.shepherd.infra.audit.AuditQuery
-import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.protocol.AuditPage
-import dev.shepherd.protocol.UsageDto
-import dev.shepherd.protocol.WhoAmIResponse
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -14,20 +11,10 @@ import io.ktor.server.routing.get
 private const val DEFAULT_AUDIT_PAGE: Int = 100
 private const val MAX_AUDIT_PAGE: Int = 500
 
-fun Route.accountRoutes(sessionManager: SessionManager, auditStore: AuditStore) {
+fun Route.accountRoutes(services: ManagerServices) {
     /** Who the key belongs to, its limits and what it currently holds. Any role. */
     get("/api/v1/me") {
-        val actor = call.actor()
-        val usage = sessionManager.usageOf(actor.id)
-        call.respond(
-            WhoAmIResponse(
-                id = actor.id,
-                name = actor.name,
-                role = actor.role.wireName,
-                quota = actor.quota.toDto(),
-                usage = UsageDto(activeSessions = usage.activeSessions, devices = usage.devices)
-            )
-        )
+        call.respond(call.shepherdApi(services).whoAmI())
     }
 
     /** The audit log, newest first. Admins see everything; everyone else only their own entries. */
@@ -43,7 +30,7 @@ fun Route.accountRoutes(sessionManager: SessionManager, auditStore: AuditStore) 
             before = parameters["before"]?.toLongOrNull(),
             limit = limit
         )
-        val records = auditStore.query(query)
+        val records = services.auditStore.query(query)
         call.respond(
             AuditPage(
                 entries = records.map { record -> record.toDto() },

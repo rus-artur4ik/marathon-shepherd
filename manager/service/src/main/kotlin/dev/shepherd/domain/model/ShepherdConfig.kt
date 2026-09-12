@@ -25,8 +25,44 @@ data class ShepherdConfig(
     /** Adapters that register themselves instead of being listed under [providers]. */
     val registration: RegistrationConfig = RegistrationConfig(),
     /** Periodic cleanup of adapter leases that no session owns. */
-    val reconciliation: ReconciliationConfig = ReconciliationConfig()
+    val reconciliation: ReconciliationConfig = ReconciliationConfig(),
+    /** The MCP endpoint at `/mcp` and the limits for sessions agents open through it. */
+    val mcp: McpConfig = McpConfig()
 )
+
+/**
+ * Sessions opened through MCP are small, short and released soon after the agent stops
+ * checking in, on top of the API key's quota. The same limits apply to the `shepherd-mcp`
+ * binary through its `MSH_MCP_*` variables.
+ */
+@Serializable
+data class McpConfig(
+    val enabled: Boolean = true,
+    /** Most devices one acquire_devices call may ask for. */
+    val maxDevicesPerSession: Int = 2,
+    /** Lifetime of a session when the agent does not ask for one. */
+    val defaultTtlSeconds: Long = 1_800,
+    /** Longest lifetime an agent may ask for, when acquiring or extending. */
+    val maxTtlSeconds: Long = 14_400,
+    /** A session is released after this long without get_session or wait_for_session. */
+    val idleTimeoutSeconds: Long = 900,
+    /** Longest one tool call waits for busy devices. */
+    val maxWaitSeconds: Long = 60
+) {
+    init {
+        require(maxDevicesPerSession > 0) { "mcp.maxDevicesPerSession must be positive" }
+        require(defaultTtlSeconds > 0) { "mcp.defaultTtlSeconds must be positive" }
+        require(maxTtlSeconds >= defaultTtlSeconds) { "mcp.maxTtlSeconds must be at least mcp.defaultTtlSeconds" }
+        require(
+            idleTimeoutSeconds >= MIN_MCP_IDLE_TIMEOUT_SECONDS
+        ) { "mcp.idleTimeoutSeconds must be at least $MIN_MCP_IDLE_TIMEOUT_SECONDS" }
+        require(maxWaitSeconds >= 0) { "mcp.maxWaitSeconds must not be negative" }
+    }
+
+    private companion object {
+        const val MIN_MCP_IDLE_TIMEOUT_SECONDS = 30L
+    }
+}
 
 @Serializable
 enum class QueuePolicy {
@@ -196,9 +232,8 @@ const val REDACTED_SECRET: String = "<redacted>"
  * replaced with [REDACTED_SECRET]. Blank secrets stay blank so operators can still see
  * which providers are running unauthenticated.
  *
- * The manager API is unauthenticated by design (see SECURITY.md), so the config
- * endpoints must never emit credentials that would let a caller impersonate the
- * manager against every adapter.
+ * Only admins can read the config, but even an admin key must not be enough to
+ * impersonate the manager against every adapter, so the secrets never leave the process.
  */
 fun ShepherdConfig.redactSecrets(): ShepherdConfig = copy(
     providers = providers.map { provider ->

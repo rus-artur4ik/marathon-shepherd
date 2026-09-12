@@ -82,13 +82,13 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 5 — MCP server
 
-- [ ] `manager/mcp`: tools (list/acquire/wait/get/extend/release devices and
+- [x] `manager/mcp`: tools (list/acquire/wait/get/extend/release devices and
       sessions) and resources over `ShepherdApi`
-- [ ] Embedded stateless Streamable HTTP endpoint at `/mcp`, bound to the caller's key
-- [ ] `shepherd-mcp` stdio binary that talks to the manager over HTTP
-- [ ] Guardrails for bots: device cap, short default TTL, idle timeout,
+- [x] Embedded stateless Streamable HTTP endpoint at `/mcp`, bound to the caller's key
+- [x] `shepherd-mcp` stdio binary that talks to the manager over HTTP
+- [x] Guardrails for bots: device cap, short default TTL, idle timeout,
       release-on-exit for stdio
-- [ ] Protocol-level tests and setup guide for Claude Code and other MCP clients
+- [x] Protocol-level tests and setup guide for Claude Code and other MCP clients
 
 ## Phase 6 — Operations
 

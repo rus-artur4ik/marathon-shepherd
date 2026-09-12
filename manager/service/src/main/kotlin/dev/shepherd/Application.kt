@@ -10,6 +10,7 @@ import dev.shepherd.api.deviceRoutes
 import dev.shepherd.api.docsRoutes
 import dev.shepherd.api.eventRoutes
 import dev.shepherd.api.healthRoutes
+import dev.shepherd.api.mcpRoutes
 import dev.shepherd.api.metricsRoutes
 import dev.shepherd.api.providerRoutes
 import dev.shepherd.api.respondError
@@ -274,10 +275,6 @@ private fun resolveStateStorePath(dataDir: String): String {
 }
 
 fun Application.configureServer(services: ManagerServices) {
-    install(ContentNegotiation) {
-        json(ApiJson)
-    }
-
     install(CallLogging) {
         filter { call -> call.request.path() !in QUIET_PATHS }
     }
@@ -334,18 +331,24 @@ fun Application.configureServer(services: ManagerServices) {
     }
 
     routing {
+        // Installed on the routing root rather than the application, because /mcp negotiates
+        // with the MCP SDK's JSON settings and Ktor cannot mix application- and route-level installs.
+        install(ContentNegotiation) {
+            json(ApiJson)
+        }
         healthRoutes(services)
         metricsRoutes(services.metrics.registry)
         docsRoutes()
         authenticate(API_AUTH) {
-            sessionRoutes(services.sessionManager)
-            deviceRoutes(services.fleetMonitor, services.deviceCatalog, services::snapshotMaxAge)
+            sessionRoutes(services)
+            deviceRoutes(services)
             providerRoutes(services.providerRegistry, services.registrations, services.fleetMonitor, services::snapshotMaxAge)
             eventRoutes(services.eventBus, services.metrics)
             configRoutes(services.providerRegistry, services.sessionManager, services.audit)
             adminRoutes(services.accessControl, services.sessionManager)
-            accountRoutes(services.sessionManager, services.auditStore)
+            accountRoutes(services)
         }
+        mcpRoutes(services)
     }
 }
 
