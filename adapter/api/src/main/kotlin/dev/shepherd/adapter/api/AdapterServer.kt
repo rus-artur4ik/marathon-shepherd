@@ -123,7 +123,9 @@ fun Application.configureAdapterApplication(
     }
     install(MicrometerMetrics) {
         registry = metrics.registry
-        distributionStatisticConfig = AdapterMetrics.HTTP_SERVER_DISTRIBUTION
+        // The registry already gives Ktor's timer its buckets. A filter added by the plugin would come
+        // after the adapter's own meters, which Micrometer does not apply it to and warns about.
+        registerDistributionStatisticConfig = false
     }
     configureAdapterAuth(env.secret)
     routing {

@@ -382,7 +382,9 @@ fun Application.configureServer(services: ManagerServices) {
 
     install(MicrometerMetrics) {
         registry = services.metrics.registry
-        distributionStatisticConfig = MicrometerManagerMetrics.HTTP_SERVER_DISTRIBUTION
+        // The registry already gives Ktor's timer its buckets. A filter added by the plugin would come
+        // after the manager's own meters, which Micrometer does not apply it to and warns about.
+        registerDistributionStatisticConfig = false
     }
 
     configureApiAuth(services.accessControl, services.accounts, services.signIn)

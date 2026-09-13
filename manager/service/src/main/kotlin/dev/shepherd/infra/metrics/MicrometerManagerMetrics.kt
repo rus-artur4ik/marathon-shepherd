@@ -6,9 +6,11 @@ import dev.shepherd.domain.metrics.ManagerMetrics
 import dev.shepherd.domain.model.SessionStatus
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Meter
 import io.micrometer.core.instrument.MultiGauge
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.Timer
+import io.micrometer.core.instrument.config.MeterFilter
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
 import io.micrometer.prometheusmetrics.PrometheusConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
@@ -24,6 +26,11 @@ import java.time.Duration
 class MicrometerManagerMetrics(
     val registry: PrometheusMeterRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
 ) : ManagerMetrics {
+
+    init {
+        // Micrometer applies a filter only to meters registered after it, so this comes before the first one.
+        registry.config().meterFilter(HTTP_SERVER_BUCKETS)
+    }
 
     private val sessions: MultiGauge = MultiGauge.builder("msh.sessions")
         .description("Sessions that are queued or holding devices, by status")
@@ -181,11 +188,14 @@ class MicrometerManagerMetrics(
             arrayOf(25L, 50L, 100L, 250L, 500L, 1_000L, 2_500L, 5_000L, 10_000L, 30_000L, 60_000L, 120_000L, 300_000L, 600_000L)
                 .map(Duration::ofMillis).toTypedArray()
 
+        /** Ktor's timer for the requests it serves (the plugin's default `metricName`). */
+        private const val HTTP_SERVER_REQUESTS: String = "ktor.http.server.requests"
+
         /**
          * Buckets for Ktor's own `ktor.http.server.requests` timer. Session long-polls hold a
          * request for up to 30 s, so the top bucket has to reach that far.
          */
-        val HTTP_SERVER_DISTRIBUTION: DistributionStatisticConfig = DistributionStatisticConfig.builder()
+        private val HTTP_SERVER_DISTRIBUTION: DistributionStatisticConfig = DistributionStatisticConfig.builder()
             .percentilesHistogram(false)
             .serviceLevelObjectives(
                 *arrayOf(5L, 10L, 25L, 50L, 100L, 250L, 500L, 1_000L, 2_500L, 5_000L, 10_000L, 30_000L)
@@ -193,5 +203,15 @@ class MicrometerManagerMetrics(
                     .toDoubleArray()
             )
             .build()
+
+        /**
+         * Gives Ktor's timer [HTTP_SERVER_DISTRIBUTION]. It sits on the registry from the start instead of
+         * coming from the Ktor plugin, whose filter would arrive after the manager's own meters; install
+         * the plugin with `registerDistributionStatisticConfig = false`.
+         */
+        private val HTTP_SERVER_BUCKETS: MeterFilter = object : MeterFilter {
+            override fun configure(id: Meter.Id, config: DistributionStatisticConfig): DistributionStatisticConfig =
+                if (id.name == HTTP_SERVER_REQUESTS) HTTP_SERVER_DISTRIBUTION.merge(config) else config
+        }
     }
 }

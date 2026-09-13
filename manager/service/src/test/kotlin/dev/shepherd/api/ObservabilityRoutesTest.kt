@@ -1,5 +1,8 @@
 package dev.shepherd.api
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import dev.shepherd.configureServer
 import dev.shepherd.domain.SessionManager
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
@@ -16,6 +19,7 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.LoggerFactory
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -58,7 +62,31 @@ class ObservabilityRoutesTest {
         assertMetric(body, """msh_provider_devices\{provider="route-provider",state="total"\} 1(\.0)?""")
         assertMetric(body, """msh_fleet_last_poll_seconds [1-9]""")
         assertMetric(body, """ktor_http_server_requests_seconds_count\{""")
+        // The manager's own buckets reach Ktor's timer, from a quick call up to a 30 s long-poll.
+        assertMetric(body, """ktor_http_server_requests_seconds_bucket\{.*le="0\.005".*\}""")
+        assertMetric(body, """ktor_http_server_requests_seconds_bucket\{.*le="30\.0".*\}""")
         assertContains(body, "jvm_memory_used_bytes")
+    }
+
+    @Test
+    fun `metric filters are in place before any meter is registered`() {
+        // Micrometer applies a filter only to meters registered after it, and warns about one that comes late.
+        val micrometer = LoggerFactory.getLogger("io.micrometer") as Logger
+        val events = ListAppender<ILoggingEvent>().apply { start() }
+        micrometer.addAppender(events)
+        try {
+            testApplication {
+                configureManager("filters")
+                client.get("/metrics")
+            }
+        } finally {
+            micrometer.detachAppender(events)
+        }
+
+        val lateFilters: List<String> = events.list
+            .map { event -> event.formattedMessage }
+            .filter { message -> "MeterFilter is being configured after" in message }
+        assertEquals(emptyList(), lateFilters)
     }
 
     @Test

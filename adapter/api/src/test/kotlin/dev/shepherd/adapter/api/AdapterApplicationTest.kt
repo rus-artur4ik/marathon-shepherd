@@ -1,5 +1,8 @@
 package dev.shepherd.adapter.api
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -10,6 +13,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import org.slf4j.LoggerFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -40,6 +44,30 @@ class AdapterApplicationTest {
         assertMetric(body, """msh_adapter_release_total\{outcome="success"\} 1(\.0)?""")
         assertMetric(body, """msh_build_info\{.*adapter_type="fake".*\} 1(\.0)?""")
         assertMetric(body, """ktor_http_server_requests_seconds_count\{""")
+        // The adapter's own buckets reach Ktor's timer, up to a ten-minute acquire on an on-demand adapter.
+        assertMetric(body, """ktor_http_server_requests_seconds_bucket\{.*le="0\.005".*\}""")
+        assertMetric(body, """ktor_http_server_requests_seconds_bucket\{.*le="600\.0".*\}""")
+    }
+
+    @Test
+    fun `metric filters are in place before any meter is registered`() {
+        // Micrometer applies a filter only to meters registered after it, and warns about one that comes late.
+        val micrometer = LoggerFactory.getLogger("io.micrometer") as Logger
+        val events = ListAppender<ILoggingEvent>().apply { start() }
+        micrometer.addAppender(events)
+        try {
+            testApplication {
+                application { configureAdapterApplication(FakeHandler(), testEnv(secret = SECRET)) }
+                client.get("/metrics")
+            }
+        } finally {
+            micrometer.detachAppender(events)
+        }
+
+        val lateFilters: List<String> = events.list
+            .map { event -> event.formattedMessage }
+            .filter { message -> "MeterFilter is being configured after" in message }
+        assertEquals(emptyList(), lateFilters)
     }
 
     @Test
