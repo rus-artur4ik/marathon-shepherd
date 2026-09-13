@@ -20,7 +20,8 @@ mshctl clients create --name claude-agent --role user --max-devices 2 --max-life
 
 A dedicated `user` client keeps the agent's sessions and audit entries apart from CI, and its
 quota caps what the agent can hold no matter what it asks for. A `viewer` key can list devices
-but not lease them.
+but not lease them. For an agent that works on your behalf, a personal token
+(`mshctl tokens create --name claude`) works too: its sessions are yours.
 
 ## Connect over HTTP
 

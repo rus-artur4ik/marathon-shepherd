@@ -1,24 +1,37 @@
 package dev.shepherd.client
 
 import dev.shepherd.protocol.AuditPage
+import dev.shepherd.protocol.AuthMethodsResponse
+import dev.shepherd.protocol.ChangePasswordRequest
+import dev.shepherd.protocol.ChangePasswordWithLoginRequest
 import dev.shepherd.protocol.ClientDto
 import dev.shepherd.protocol.ClientKeyResponse
 import dev.shepherd.protocol.CreateClientRequest
 import dev.shepherd.protocol.CreateSessionRequest
+import dev.shepherd.protocol.CreateTokenRequest
+import dev.shepherd.protocol.CreateUserRequest
+import dev.shepherd.protocol.CreatedUserResponse
 import dev.shepherd.protocol.DeviceDto
 import dev.shepherd.protocol.DeviceQuery
 import dev.shepherd.protocol.DevicesResponse
 import dev.shepherd.protocol.ErrorResponse
 import dev.shepherd.protocol.EventDto
 import dev.shepherd.protocol.ExtendSessionRequest
+import dev.shepherd.protocol.IssuedTokenResponse
 import dev.shepherd.protocol.MaintenanceRequest
+import dev.shepherd.protocol.PasswordResetResponse
+import dev.shepherd.protocol.PersonalTokenDto
 import dev.shepherd.protocol.ProviderInfoDto
+import dev.shepherd.protocol.ResetPasswordRequest
 import dev.shepherd.protocol.SessionResponse
 import dev.shepherd.protocol.ShepherdApi
 import dev.shepherd.protocol.ShepherdApiException
 import dev.shepherd.protocol.ShepherdHealthResponse
 import dev.shepherd.protocol.StatusResponse
+import dev.shepherd.protocol.TokenLoginRequest
 import dev.shepherd.protocol.UpdateClientRequest
+import dev.shepherd.protocol.UpdateUserRequest
+import dev.shepherd.protocol.UserDto
 import dev.shepherd.protocol.WaitSessionRequest
 import dev.shepherd.protocol.WhoAmIResponse
 import io.ktor.client.HttpClient
@@ -187,6 +200,62 @@ class ShepherdClient(
         limit?.let { value -> url.parameters.append("limit", value.toString()) }
     }
 
+    /** How people can sign in: local passwords, LDAP, OIDC providers. Needs no key. */
+    suspend fun authMethods(): AuthMethodsResponse = call(HttpMethod.Get, "/api/v1/auth/methods", AuthMethodsResponse.serializer())
+
+    /** Signs in with a password and returns a new personal token, shown once. Needs no key. */
+    suspend fun createTokenWithPassword(username: String, password: String, name: String, expiresInDays: Int? = null): IssuedTokenResponse =
+        call(HttpMethod.Post, "/api/v1/auth/tokens", IssuedTokenResponse.serializer()) {
+            json(TokenLoginRequest(username, password, name, expiresInDays), TokenLoginRequest.serializer())
+        }
+
+    /** Replaces a password, a temporary one included, without a key. */
+    suspend fun changePasswordWithLogin(username: String, currentPassword: String, newPassword: String) =
+        send(HttpMethod.Post, "/api/v1/auth/password") {
+            json(ChangePasswordWithLoginRequest(username, currentPassword, newPassword), ChangePasswordWithLoginRequest.serializer())
+        }
+
+    /** Changes the password of the person this client's token belongs to. */
+    suspend fun changePassword(currentPassword: String, newPassword: String) = send(HttpMethod.Post, "/api/v1/me/password") {
+        json(ChangePasswordRequest(currentPassword, newPassword), ChangePasswordRequest.serializer())
+    }
+
+    suspend fun listTokens(): List<PersonalTokenDto> = call(
+        HttpMethod.Get,
+        "/api/v1/me/tokens",
+        ListSerializer(PersonalTokenDto.serializer())
+    )
+
+    suspend fun createToken(name: String, expiresInDays: Int? = null): IssuedTokenResponse =
+        call(HttpMethod.Post, "/api/v1/me/tokens", IssuedTokenResponse.serializer()) {
+            json(CreateTokenRequest(name, expiresInDays), CreateTokenRequest.serializer())
+        }
+
+    suspend fun revokeToken(id: String): PersonalTokenDto = call(HttpMethod.Delete, path("me", "tokens", id), PersonalTokenDto.serializer())
+
+    suspend fun listUsers(includeDisabled: Boolean = false): List<UserDto> =
+        call(HttpMethod.Get, "/api/v1/admin/users", ListSerializer(UserDto.serializer())) {
+            if (includeDisabled) url.parameters.append("includeDisabled", "true")
+        }
+
+    suspend fun getUser(id: String): UserDto = call(HttpMethod.Get, path("admin", "users", id), UserDto.serializer())
+
+    suspend fun createUser(request: CreateUserRequest): CreatedUserResponse =
+        call(HttpMethod.Post, "/api/v1/admin/users", CreatedUserResponse.serializer()) { json(request, CreateUserRequest.serializer()) }
+
+    suspend fun updateUser(id: String, request: UpdateUserRequest): UserDto =
+        call(HttpMethod.Patch, path("admin", "users", id), UserDto.serializer()) { json(request, UpdateUserRequest.serializer()) }
+
+    suspend fun resetUserPassword(id: String, password: String? = null): PasswordResetResponse =
+        call(HttpMethod.Post, path("admin", "users", id, "password"), PasswordResetResponse.serializer()) {
+            json(ResetPasswordRequest(password), ResetPasswordRequest.serializer())
+        }
+
+    suspend fun disableUser(id: String, releaseSessions: Boolean = false): UserDto =
+        call(HttpMethod.Delete, path("admin", "users", id), UserDto.serializer()) {
+            if (releaseSessions) url.parameters.append("releaseSessions", "true")
+        }
+
     /** The manager's active configuration, secrets redacted; kept as JSON because its model is the manager's own. */
     suspend fun config(): JsonObject = call(HttpMethod.Get, "/api/v1/config", JsonObject.serializer())
 
@@ -343,6 +412,18 @@ class ShepherdClient(
             throw ShepherdApiException(response.status.value, errorMessage(response.status, body))
         }
         return JSON.decodeFromString(serializer, body)
+    }
+
+    /** A call whose success has no body worth reading, like `204 No Content`. */
+    private suspend fun send(method: HttpMethod, path: String, configure: HttpRequestBuilder.() -> Unit = {}) {
+        val response = http.request("$base$path") {
+            this.method = method
+            token?.let { key -> bearerAuth(key) }
+            configure()
+        }
+        if (!response.status.isSuccess()) {
+            throw ShepherdApiException(response.status.value, errorMessage(response.status, response.bodyAsText()))
+        }
     }
 
     private fun <T> HttpRequestBuilder.json(value: T, serializer: KSerializer<T>) {

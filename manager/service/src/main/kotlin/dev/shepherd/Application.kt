@@ -2,8 +2,13 @@ package dev.shepherd
 
 import dev.shepherd.api.API_AUTH
 import dev.shepherd.api.BEARER_CHALLENGE
+import dev.shepherd.api.BrowserSessionGuard
+import dev.shepherd.api.ErrorBodyWritten
+import dev.shepherd.api.SecurityHeaders
+import dev.shepherd.api.WEB_AUTH
 import dev.shepherd.api.accountRoutes
 import dev.shepherd.api.adminRoutes
+import dev.shepherd.api.browserSessionRoutes
 import dev.shepherd.api.configRoutes
 import dev.shepherd.api.configureApiAuth
 import dev.shepherd.api.deviceRoutes
@@ -12,9 +17,12 @@ import dev.shepherd.api.eventRoutes
 import dev.shepherd.api.healthRoutes
 import dev.shepherd.api.mcpRoutes
 import dev.shepherd.api.metricsRoutes
+import dev.shepherd.api.profileRoutes
 import dev.shepherd.api.providerRoutes
+import dev.shepherd.api.publicAuthRoutes
 import dev.shepherd.api.respondError
 import dev.shepherd.api.sessionRoutes
+import dev.shepherd.api.userAdminRoutes
 import dev.shepherd.domain.FleetMonitor
 import dev.shepherd.domain.LeaseReconciler
 import dev.shepherd.domain.SessionManager
@@ -30,7 +38,18 @@ import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.infra.audit.StoreAuditTrail
 import dev.shepherd.infra.auth.AccessControl
+import dev.shepherd.infra.auth.Accounts
 import dev.shepherd.infra.auth.ClientStore
+import dev.shepherd.infra.auth.LdapSignIn
+import dev.shepherd.infra.auth.LoginThrottle
+import dev.shepherd.infra.auth.OidcSignIn
+import dev.shepherd.infra.auth.PasswordHasher
+import dev.shepherd.infra.auth.SignIn
+import dev.shepherd.infra.auth.SignInFailure
+import dev.shepherd.infra.auth.UserStore
+import dev.shepherd.infra.auth.UserTokenStore
+import dev.shepherd.infra.auth.UserWithPassword
+import dev.shepherd.infra.auth.WebSessionStore
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.db.InstanceLock
 import dev.shepherd.infra.db.ShepherdDatabase
@@ -77,7 +96,8 @@ private const val DEFAULT_MANAGER_PORT: Int = 6037
 private const val DEFAULT_STATE_STORE_NAME: String = "msh.db"
 private const val CLEANUP_INTERVAL_MS: Long = 60_000L
 private const val ADAPTER_CONNECT_TIMEOUT_MS: Long = 5_000L
-private const val INITIAL_ADMIN_TOKEN_FILE: String = "initial-admin-token"
+private const val SIGN_IN_REQUEST_TIMEOUT_MS: Long = 15_000L
+private const val INITIAL_ADMIN_PASSWORD_FILE: String = "initial-admin-password"
 private const val CLEANUPS_PER_RETENTION_SWEEP: Int = 60
 
 /** Exit code when another manager already holds the database. */
@@ -135,15 +155,50 @@ fun main(args: Array<String>) {
         }
     }
     val providerRegistry = ProviderRegistry(configStore, httpClient, metrics)
+    val clientStore = ClientStore(database)
+    val userStore = UserStore(database)
+    val webSessionStore = WebSessionStore(database)
     val accessControl = AccessControl(
-        clients = ClientStore(database),
+        clients = clientStore,
         audit = audit,
         quotaDefaults = { providerRegistry.currentConfig().quotas.defaults.toQuota() },
-        staticAdminToken = readStringEnv("MSH_ADMIN_TOKEN")
+        staticAdminToken = readStringEnv("MSH_ADMIN_TOKEN"),
+        otherAdmins = { userStore.countActiveAdmins() }
     )
-    val initialTokenFile = File(dataDir, INITIAL_ADMIN_TOKEN_FILE)
-    runBlocking { accessControl.bootstrap(initialTokenFile) }
-        ?.let { key -> announceInitialAdminKey(key, initialTokenFile, port) }
+    val authConfig = { providerRegistry.currentConfig().auth }
+    val accounts = Accounts(
+        users = userStore,
+        tokens = UserTokenStore(database),
+        webSessions = webSessionStore,
+        passwords = PasswordHasher(),
+        audit = audit,
+        authConfig = authConfig,
+        quotaDefaults = { providerRegistry.currentConfig().quotas.defaults.toQuota() },
+        otherAdmins = { clientStore.countActiveAdmins() + if (accessControl.hasStaticAdmin) 1 else 0 }
+    )
+    // Providers answer sign-in calls quickly or not at all; do not hold a browser waiting on them.
+    val signInHttpClient = HttpClient(CIO) {
+        install(HttpTimeout) {
+            connectTimeoutMillis = ADAPTER_CONNECT_TIMEOUT_MS
+            requestTimeoutMillis = SIGN_IN_REQUEST_TIMEOUT_MS
+        }
+    }
+    val signIn = SignIn(
+        accounts = accounts,
+        webSessions = webSessionStore,
+        ldap = LdapSignIn(),
+        oidc = OidcSignIn(signInHttpClient, authConfig),
+        throttle = LoginThrottle(
+            maxFailures = { authConfig().sessions.maxFailedAttempts },
+            lockout = { Duration.ofMinutes(authConfig().sessions.lockoutMinutes) }
+        ),
+        authConfig = authConfig,
+        audit = audit
+    )
+    warnAboutPlaintextSignIn(authConfig())
+    val initialPasswordFile = File(dataDir, INITIAL_ADMIN_PASSWORD_FILE)
+    runBlocking { accounts.bootstrap(initialPasswordFile, readStringEnv("MSH_ADMIN_PASSWORD")) }
+        ?.let { created -> announceInitialAdmin(created, initialPasswordFile, port) }
     val sessionManager = SessionManager(
         providerCatalog = providerRegistry,
         stateStore = stateStore,
@@ -196,6 +251,8 @@ fun main(args: Array<String>) {
         eventBus = eventBus,
         deviceCatalog = deviceCatalog,
         registrations = registrations,
+        accounts = accounts,
+        signIn = signIn,
         metrics = metrics
     )
 
@@ -206,6 +263,7 @@ fun main(args: Array<String>) {
             delay(CLEANUP_INTERVAL_MS)
             try {
                 sessionManager.cleanupExpiredSessions()
+                signIn.purgeEndedSessions()
             } catch (e: Exception) {
                 logger.error("Session cleanup failed", e)
             }
@@ -278,27 +336,36 @@ private suspend fun pruneFinishedSessions(stateStore: StateStore, retentionDays:
 }
 
 /**
- * Shows a generated admin key exactly once. It goes to stdout rather than the log so log
- * shipping does not copy it around; the file keeps it for operators who missed the output.
+ * Shows the first admin's one-time password exactly once. It goes to stdout rather than the log so
+ * log shipping does not copy it around; the file keeps it for operators who missed the output.
  */
-private fun announceInitialAdminKey(key: String, file: File, port: Int) {
+private fun announceInitialAdmin(created: UserWithPassword, file: File, port: Int) {
     val rule = "=".repeat(78)
     println(
         """
         |$rule
-        | Marathon Shepherd created the first admin API key. It is shown only once:
+        | Marathon Shepherd created the first admin account. Sign in once and choose a password:
         |
-        |     $key
+        |     username: ${created.user.username}
+        |     password: ${created.temporaryPassword}
         |
-        | A copy is in ${file.absolutePath} (readable by this user only).
-        | Use it to create named clients, then delete that file:
+        |     http://localhost:$port/   or   mshctl passwd --username ${created.user.username}
         |
-        |     curl -X POST -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
-        |          -d '{"name":"ci","role":"user"}' http://localhost:$port/api/v1/admin/clients
+        | A copy is in ${file.absolutePath} (readable by this user only); delete it
+        | after signing in. Set MSH_ADMIN_PASSWORD to choose the first password yourself.
         |$rule
         """.trimMargin()
     )
-    logger.warn("Generated the first admin API key; it was printed to stdout and saved to {}", file.absolutePath)
+    logger.warn("Created the first admin account; its one-time password was printed to stdout and saved to {}", file.absolutePath)
+}
+
+private fun warnAboutPlaintextSignIn(auth: dev.shepherd.domain.model.AuthConfig) {
+    auth.ldap?.takeIf { ldap -> ldap.url.startsWith("ldap://") && !ldap.startTls }?.let {
+        logger.warn("auth.ldap.url is plain ldap:// without startTls: passwords cross the network unencrypted")
+    }
+    if (auth.oidc.isNotEmpty() && auth.publicUrl?.startsWith("http://") == true) {
+        logger.warn("auth.publicUrl is plain http: sign-in codes and session cookies travel unencrypted")
+    }
 }
 
 private fun resolveStateStorePath(dataDir: String): String {
@@ -306,6 +373,8 @@ private fun resolveStateStorePath(dataDir: String): String {
 }
 
 fun Application.configureServer(services: ManagerServices) {
+    install(SecurityHeaders)
+
     install(CallLogging) {
         filter { call -> call.request.path() !in QUIET_PATHS }
     }
@@ -315,7 +384,7 @@ fun Application.configureServer(services: ManagerServices) {
         distributionStatisticConfig = MicrometerManagerMetrics.HTTP_SERVER_DISTRIBUTION
     }
 
-    configureApiAuth(services.accessControl)
+    configureApiAuth(services.accessControl, services.accounts, services.signIn)
 
     // Error bodies are written as text rather than through content negotiation, so they
     // keep their shape on routes that negotiate a different format (MCP, event streams).
@@ -325,6 +394,15 @@ fun Application.configureServer(services: ManagerServices) {
         }
         exception<SerializationException> { call, cause ->
             call.respondError(HttpStatusCode.BadRequest, cause.message ?: "Malformed JSON")
+        }
+        exception<SignInFailure> { call, cause ->
+            val retryAfter: Long? = cause.retryAfterSeconds
+            if (retryAfter != null) {
+                call.response.header(HttpHeaders.RetryAfter, retryAfter.toString())
+                call.respondError(HttpStatusCode.TooManyRequests, cause.message ?: "Too many failed sign-ins")
+            } else {
+                call.respondError(HttpStatusCode.Unauthorized, cause.message ?: "Sign-in failed")
+            }
         }
         exception<ResourceNotFoundException> { call, cause ->
             call.respondError(HttpStatusCode.NotFound, cause.message ?: "Not found")
@@ -350,6 +428,10 @@ fun Application.configureServer(services: ManagerServices) {
         }
         // The bearer provider answers 401 with an empty body; give API clients the reason.
         status(HttpStatusCode.Unauthorized) { call, _ ->
+            // A failed sign-in already explained itself.
+            if (call.attributes.contains(ErrorBodyWritten)) {
+                return@status
+            }
             // Keep the provider's own challenge; add one only when it is missing.
             if (call.response.headers[HttpHeaders.WWWAuthenticate] == null) {
                 call.response.header(HttpHeaders.WWWAuthenticate, BEARER_CHALLENGE)
@@ -370,7 +452,10 @@ fun Application.configureServer(services: ManagerServices) {
         healthRoutes(services)
         metricsRoutes(services.metrics.registry)
         docsRoutes()
-        authenticate(API_AUTH) {
+        publicAuthRoutes(services)
+        // Clients and scripts send a key; the web UI rides on its session cookie.
+        authenticate(API_AUTH, WEB_AUTH) {
+            install(BrowserSessionGuard)
             sessionRoutes(services)
             deviceRoutes(services)
             providerRoutes(services.providerRegistry, services.registrations, services.fleetMonitor, services::snapshotMaxAge)
@@ -378,6 +463,9 @@ fun Application.configureServer(services: ManagerServices) {
             configRoutes(services.providerRegistry, services.sessionManager, services.audit)
             adminRoutes(services.accessControl, services.sessionManager)
             accountRoutes(services)
+            browserSessionRoutes(services)
+            profileRoutes(services)
+            userAdminRoutes(services)
         }
         mcpRoutes(services)
     }

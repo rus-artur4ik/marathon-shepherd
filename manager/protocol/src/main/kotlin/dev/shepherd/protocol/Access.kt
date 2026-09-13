@@ -66,7 +66,9 @@ data class WhoAmIResponse(
     val name: String,
     val role: String,
     val quota: QuotaDto,
-    val usage: UsageDto
+    val usage: UsageDto,
+    /** `user` for a person (signed in or with a personal token), `client` for an API client. */
+    val kind: String = "client"
 )
 
 @Serializable

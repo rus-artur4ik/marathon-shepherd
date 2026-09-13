@@ -21,9 +21,10 @@ It is built for [Marathon](https://marathonlabs.github.io/marathon/) — the shi
 step injects the leased adb servers straight into Marathon's Gradle configuration — but the
 REST API is runner-agnostic.
 
-Every caller has its own API key, role and quota, so CI jobs, developers, scripts and AI
-agents share one fleet without stepping on each other: keys are issued and revoked centrally,
-sessions are owned, and everything that happens is in an audit log and an event stream.
+People sign in with a password, LDAP / Active Directory or an OIDC provider; CI jobs, scripts
+and AI agents use API keys. Every caller has a role and a quota, so they share one fleet without
+stepping on each other: sessions are owned, and everything that happens is in an audit log and an
+event stream.
 
 > **Not affiliated with Marathon Labs.** "Marathon" is used descriptively to name the test
 > runner this project feeds devices to. See [NOTICE](NOTICE).
@@ -37,6 +38,7 @@ sessions are owned, and everything that happens is in an audit log and an event 
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
 - [Manager API](#manager-api)
+- [Signing in](#signing-in)
 - [Clients](#clients)
 - [Devices for AI agents](#devices-for-ai-agents)
 - [Configuration](#configuration)
@@ -122,15 +124,21 @@ Manager looks for `msh.yaml` in the current directory by default. Pass `--config
 sudo ln -sf "$PWD/manager/cli/build/install/mshctl/bin/mshctl" /usr/local/bin/mshctl
 ```
 
-**4. Take the admin key the manager printed on first start**
+**4. Sign in as the first admin**
+
+On first start the manager creates the user `admin` and prints a one-time password (a copy is
+in `~/.msh/initial-admin-password`).
 
 ```bash
 export MSH_URL=http://localhost:6037
-export MSH_TOKEN=<the key printed once at startup, also in ~/.msh/initial-admin-token>
-mshctl clients create --name my-laptop --role user --max-devices 4   # a key per consumer
+mshctl passwd --username admin                       # replace the one-time password
+mshctl login --username admin                        # keeps a personal token for mshctl
+mshctl users create --username dana --role user      # people who sign in
+mshctl clients create --name nightly-ci --role user  # keys for CI jobs and agents
 ```
 
-Set `MSH_ADMIN_TOKEN` before starting the manager to provision a known admin key instead.
+Set `MSH_ADMIN_PASSWORD` before the first start to choose the first password yourself, or
+`MSH_ADMIN_TOKEN` to provision a static admin API key for automation.
 
 **5. Verify and create a session**
 
@@ -175,9 +183,10 @@ services:
     container_name: shepherd-manager
     restart: unless-stopped
     environment:
-      # Optional. Without it the manager creates an admin key on first start, prints it
-      # once in the container log and keeps a copy in /var/lib/msh/initial-admin-token.
-      MSH_ADMIN_TOKEN: "${MSH_ADMIN_TOKEN:-}"
+      # Optional. Without it the manager gives the user `admin` a one-time password on first
+      # start, prints it once in the container log and keeps a copy in
+      # /var/lib/msh/initial-admin-password.
+      MSH_ADMIN_PASSWORD: "${MSH_ADMIN_PASSWORD:-}"
     volumes:
       - "./msh.yaml:/etc/msh/msh.yaml:ro"
       - msh-data:/var/lib/msh
@@ -198,8 +207,8 @@ volumes:
 ```bash
 docker compose up -d
 curl -sf http://localhost:6037/live
-docker compose logs manager | grep -A4 "admin API key"   # the key, printed once
-docker exec shepherd-manager mshctl --manager http://localhost:6037 --token <key> health
+docker compose logs manager | grep -A4 "first admin account"   # the one-time password, printed once
+docker exec shepherd-manager mshctl --manager http://localhost:6037 health
 ```
 
 Reload config at runtime without restart:
@@ -380,8 +389,8 @@ instead of the volume. See [deploy/helm/marathon-shepherd/README.md](deploy/helm
 
 ## Manager API
 
-Every `/api/v1/...` call and `/mcp` carry `Authorization: Bearer <key>`. The probes, metrics
-and documentation endpoints are public. The full description is served at `/openapi.yaml`,
+Every `/api/v1/...` call carries `Authorization: Bearer <key>` or the web UI's session cookie;
+`/mcp` takes bearer keys only. Sign-in, the probes, metrics and documentation endpoints are public. The full description is served at `/openapi.yaml`,
 with Swagger UI at `/docs`.
 
 | Method | Path | Description |
@@ -400,7 +409,13 @@ with Swagger UI at `/docs`.
 | `GET` | `/api/v1/providers` | Providers from `msh.yaml` and self-registered adapters |
 | `POST` | `/api/v1/providers/register` | Adapter self-registration (`provider` role) |
 | `DELETE` | `/api/v1/providers/{name}` | Remove a registration (admin) |
-| `GET` | `/api/v1/me` | The calling client, its quota and its usage |
+| `POST` | `/api/v1/auth/login`, `GET /api/v1/auth/methods` | Password sign-in (sets the session cookie), sign-in options (public) |
+| `GET` | `/auth/oidc/{provider}/login` | Sign in with an OIDC provider (public) |
+| `POST` | `/api/v1/auth/tokens`, `/api/v1/auth/password` | Personal token or password change with a password, for CLIs (public) |
+| `GET`, `POST` | `/api/v1/auth/session`, `/api/v1/auth/logout` | The browser session |
+| `GET`, `POST`, `DELETE` | `/api/v1/me/tokens`, `POST /api/v1/me/password` | Your personal tokens and password |
+| `GET`, `POST`, `PATCH`, `DELETE` | `/api/v1/admin/users[/{id}[/password\|/tokens]]` | People who sign in (admin) |
+| `GET` | `/api/v1/me` | The caller, its quota and its usage |
 | `GET` | `/api/v1/audit` | Audit log |
 | `GET`, `POST`, `PATCH`, `DELETE` | `/api/v1/admin/clients[/{id}[/rotate]]` | API clients and keys (admin) |
 | `GET`, `PUT` | `/api/v1/config`, `POST /api/v1/config/reload` | Configuration (admin) |
@@ -456,6 +471,27 @@ If no registered devices can ever satisfy the request, the manager fails immedia
 ```
 
 `POST /api/v1/sessions/{id}/wait` long-polls the queue, refreshes the session heartbeat, and returns the updated session payload. The manager allocates the head of the queue as soon as at least one matching device becomes free.
+
+## Signing in
+
+People sign in with a username and password by default. Add LDAP / Active Directory or any
+number of OIDC providers (Keycloak, Microsoft Entra ID, Okta, Google, GitLab) under `auth` in
+`msh.yaml`; their groups decide who is an admin, a user or a viewer.
+
+```yaml
+auth:
+  publicUrl: "https://shepherd.example.com"
+  oidc:
+    - id: keycloak
+      issuer: "https://sso.example.com/realms/engineering"
+      clientId: marathon-shepherd
+      clientSecretEnv: MSH_OIDC_KEYCLOAK_SECRET
+      roleMapping: { shepherd-admins: admin, mobile-qa: user }
+```
+
+Browser sessions use an `HttpOnly` cookie with a CSRF token, repeated failures lock a username
+out, and `mshctl login` gives people a personal token for the command line.
+[docs/authentication.md](docs/authentication.md) covers local accounts, LDAP, OIDC and sessions.
 
 ## Clients
 
@@ -552,8 +588,9 @@ providers:
 |-----------------|---------|-------------|
 | `--config <path>` / `MSH_CONFIG` | `msh.yaml` in CWD | Config file path |
 | `MSH_PORT` | `6037` | HTTP port |
-| `MSH_DATA_DIR` | `~/.msh` | State directory: SQLite database, generated admin key, lock file |
-| `MSH_ADMIN_TOKEN` | _(generated)_ | Known admin API key. Without it the manager creates one on first start, prints it once and writes it to `<MSH_DATA_DIR>/initial-admin-token` |
+| `MSH_DATA_DIR` | `~/.msh` | State directory: SQLite database, generated admin password, lock file |
+| `MSH_ADMIN_PASSWORD` | _(generated)_ | First password of the `admin` user. Without it the manager generates a one-time password on first start, prints it once and writes it to `<MSH_DATA_DIR>/initial-admin-password` |
+| `MSH_ADMIN_TOKEN` | _(none)_ | Optional static admin API key for automation |
 | `MSH_DB_URL` | _(SQLite)_ | `jdbc:postgresql://...` to keep state in Postgres. One manager per database either way: the second one exits |
 
 Provider config note:
@@ -872,8 +909,10 @@ builds. They are deliberately separate — do not cross-reference them.
 
 ## Security
 
-Every `/api/v1` call and the MCP endpoint need an API key, and sessions belong to the client
-that created them. What stays open: `/live`, `/ready`, `/health`, `/metrics` and the API docs,
+Every `/api/v1` call needs an API key or a signed-in browser session, and sessions belong to
+the client or person that created them. Passwords are stored as PBKDF2 hashes, browser sessions
+use `HttpOnly` `SameSite` cookies with a CSRF token, and repeated failed sign-ins lock a username
+out. What stays open: `/live`, `/ready`, `/health`, `/metrics` and the API docs,
 which describe the fleet, and the per-lease adb proxies, which are unauthenticated for the
 duration of a lease. There is no TLS in the manager, so terminate it in front and keep the
 port on a private network. Adapters authenticate with bearer tokens.

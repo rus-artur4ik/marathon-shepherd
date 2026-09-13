@@ -8,13 +8,10 @@ import dev.shepherd.infra.db.ShepherdDatabase
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.attribute.PosixFilePermission
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -24,28 +21,9 @@ class AccessControlTest {
     lateinit var tempDir: File
 
     @Test
-    fun `bootstrap creates one admin, writes its key owner-only and runs only once`() = runTest {
-        val accessControl = accessControl("bootstrap")
-        val file = File(tempDir, "initial-admin-token")
-
-        val key = accessControl.bootstrap(file)
-        val second = accessControl.bootstrap(file)
-
-        assertNotNull(key)
-        assertTrue(key.startsWith(ApiKeys.PREFIX))
-        assertEquals(key, file.readText().trim())
-        assertEquals(setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE), Files.getPosixFilePermissions(file.toPath()))
-        assertEquals(Role.ADMIN, accessControl.authenticate(key)?.role)
-        assertNull(second, "an existing admin must not trigger another key")
-    }
-
-    @Test
-    fun `static admin token skips bootstrap and is never stored`() = runTest {
+    fun `the static admin token is never stored`() = runTest {
         val accessControl = accessControl("static", staticAdminToken = "s3cret-admin")
-        val file = File(tempDir, "initial-admin-token")
 
-        assertNull(accessControl.bootstrap(file))
-        assertFalse(file.exists())
         assertEquals(AccessControl.STATIC_ADMIN, accessControl.authenticate("s3cret-admin"))
         assertNull(accessControl.authenticate("s3cret-admin-but-longer"))
         assertTrue(accessControl.listClients().isEmpty())
@@ -54,7 +32,7 @@ class AccessControlTest {
     @Test
     fun `the last admin cannot be revoked or demoted`() = runTest {
         val accessControl = accessControl("last-admin")
-        val firstKey = checkNotNull(accessControl.bootstrap(null))
+        val firstKey = accessControl.createClient(Actor.SYSTEM, "admin", Role.ADMIN, null, ClientQuota.UNLIMITED).apiKey
         val first = accessControl.listClients().single()
 
         assertFailsWith<ConflictException> { accessControl.revokeClient(Actor.SYSTEM, first.id) }

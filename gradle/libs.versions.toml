@@ -17,6 +17,8 @@ mcp = "0.15.0"
 postgres = "42.7.13"
 hikari = "7.1.0"
 embedded-postgres = "2.2.2"
+nimbus-jose-jwt = "10.0.2"
+unboundid-ldapsdk = "7.0.2"
 
 [libraries]
 # Ktor server
@@ -57,6 +59,8 @@ exposed-java-time = { module = "org.jetbrains.exposed:exposed-java-time", versio
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgres" }
 hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
 embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
+nimbus-jose-jwt = { module = "com.nimbusds:nimbus-jose-jwt", version.ref = "nimbus-jose-jwt" }
+unboundid-ldapsdk = { module = "com.unboundid:unboundid-ldapsdk", version.ref = "unboundid-ldapsdk" }
 
 # Logging
 logback = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }

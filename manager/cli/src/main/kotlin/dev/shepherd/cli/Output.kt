@@ -153,7 +153,7 @@ internal fun formatQuota(quota: QuotaDto): String = listOfNotNull(
     quota.maxPriority?.let { priority -> "priority=$priority" }
 ).joinToString(" ").ifEmpty { "unlimited" }
 
-internal fun formatWhoAmI(me: WhoAmIResponse): String = "${me.name} (${me.role}), client ${me.id}\n" +
+internal fun formatWhoAmI(me: WhoAmIResponse): String = "${me.name} (${me.role}), ${me.kind} ${me.id}\n" +
     "Quota: ${formatQuota(me.quota)}\n" +
     "Usage: ${me.usage.activeSessions} active session(s), ${me.usage.devices} device(s)"
 

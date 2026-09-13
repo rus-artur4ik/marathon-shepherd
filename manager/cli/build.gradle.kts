@@ -1,5 +1,7 @@
 plugins {
     kotlin("jvm")
+    // The credentials file mshctl login writes.
+    kotlin("plugin.serialization")
     application
 }
 

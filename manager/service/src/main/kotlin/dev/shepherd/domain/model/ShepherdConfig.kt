@@ -29,7 +29,9 @@ data class ShepherdConfig(
     /** Periodic cleanup of adapter leases that no session owns. */
     val reconciliation: ReconciliationConfig = ReconciliationConfig(),
     /** The MCP endpoint at `/mcp` and the limits for sessions agents open through it. */
-    val mcp: McpConfig = McpConfig()
+    val mcp: McpConfig = McpConfig(),
+    /** How people sign in: local passwords, LDAP / Active Directory, OIDC providers. */
+    val auth: AuthConfig = AuthConfig()
 )
 
 /**
@@ -240,8 +242,8 @@ data class ProviderConfig(
 const val REDACTED_SECRET: String = "<redacted>"
 
 /**
- * A copy safe to serialize to an API client: every non-blank adapter bearer token is
- * replaced with [REDACTED_SECRET]. Blank secrets stay blank so operators can still see
+ * A copy safe to serialize to an API client: every non-blank adapter bearer token, LDAP bind
+ * password and OIDC client secret is replaced with [REDACTED_SECRET]. Blank secrets stay blank so operators can still see
  * which providers are running unauthenticated.
  *
  * Only admins can read the config, but even an admin key must not be enough to
@@ -250,7 +252,13 @@ const val REDACTED_SECRET: String = "<redacted>"
 fun ShepherdConfig.redactSecrets(): ShepherdConfig = copy(
     providers = providers.map { provider ->
         if (provider.secret.isBlank()) provider else provider.copy(secret = REDACTED_SECRET)
-    }
+    },
+    auth = auth.copy(
+        ldap = auth.ldap?.let { ldap -> if (ldap.bindPassword.isBlank()) ldap else ldap.copy(bindPassword = REDACTED_SECRET) },
+        oidc = auth.oidc.map { provider ->
+            if (provider.clientSecret.isBlank()) provider else provider.copy(clientSecret = REDACTED_SECRET)
+        }
+    )
 )
 
 /**
@@ -263,6 +271,7 @@ fun ShepherdConfig.redactSecrets(): ShepherdConfig = copy(
  */
 fun ShepherdConfig.restoreRedactedSecrets(current: ShepherdConfig): ShepherdConfig {
     val knownSecrets = current.providers.associate { it.name to it.secret }
+    val knownClientSecrets = current.auth.oidc.associate { provider -> provider.id to provider.clientSecret }
     return copy(
         providers = providers.map { provider ->
             if (provider.secret == REDACTED_SECRET) {
@@ -270,6 +279,18 @@ fun ShepherdConfig.restoreRedactedSecrets(current: ShepherdConfig): ShepherdConf
             } else {
                 provider
             }
-        }
+        },
+        auth = auth.copy(
+            ldap = auth.ldap?.let { ldap ->
+                if (ldap.bindPassword == REDACTED_SECRET) ldap.copy(bindPassword = current.auth.ldap?.bindPassword.orEmpty()) else ldap
+            },
+            oidc = auth.oidc.map { provider ->
+                if (provider.clientSecret == REDACTED_SECRET) {
+                    provider.copy(clientSecret = knownClientSecrets[provider.id].orEmpty())
+                } else {
+                    provider
+                }
+            }
+        )
     )
 }

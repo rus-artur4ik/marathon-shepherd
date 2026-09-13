@@ -82,3 +82,17 @@ providers:
 #   maxTtlSeconds: 14400
 #   idleTimeoutSeconds: 900           # released after this long without get_session
 #   maxWaitSeconds: 60                # longest one tool call waits for busy devices
+
+# How people sign in (docs/authentication.md). Local accounts are on by default, and the first
+# start creates an admin whose one-time password is printed once. LDAP / Active Directory and
+# OIDC providers are added under ldap and oidc, as the guide shows.
+# auth:
+#   publicUrl: "https://shepherd.example.com"   # OIDC redirect URIs; https makes cookies secure-only
+#   local:
+#     enabled: true
+#     minPasswordLength: 10
+#   sessions:
+#     idleTimeoutMinutes: 480
+#     maxLifetimeHours: 168
+#     maxFailedAttempts: 5
+#     lockoutMinutes: 15

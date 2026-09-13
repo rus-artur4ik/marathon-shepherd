@@ -15,12 +15,14 @@ AI agents can lease devices, and the operational pieces to run it as a service.
 
 ### Breaking
 
-- **The Manager API requires an API key.** Every `/api/v1/...` call and `/mcp` need
-  `Authorization: Bearer <key>`; `/live`, `/ready`, `/health`, `/metrics` and the API docs
-  stay public. On first start the manager creates an admin key, prints it once and writes it
-  to `<dataDir>/initial-admin-token`; `MSH_ADMIN_TOKEN` provisions a known key instead.
-  Existing callers need a key of their own — `mshctl clients create --name ci --role user`.
-- Sessions belong to the client that created them: only that client or an admin may wait on,
+- **The Manager API requires authentication.** Every `/api/v1/...` call needs an API key
+  (`Authorization: Bearer <key>`) or a signed-in browser session, and `/mcp` needs a key;
+  `/live`, `/ready`, `/health`, `/metrics` and the API docs stay public. On first start the
+  manager creates the user `admin` with a one-time password, prints it once and writes it to
+  `<dataDir>/initial-admin-password`; `MSH_ADMIN_PASSWORD` chooses it instead, and
+  `MSH_ADMIN_TOKEN` provisions a static admin API key. Existing callers need a key of their
+  own — `mshctl clients create --name ci --role user`.
+- Sessions belong to the client or person that created them: only they or an admin may wait on,
   extend or release one.
 - `mshctl create --api` no longer defaults to `34`. Without it, any API level matches.
 - The Jenkins step takes `credentialsId` (or `MSH_TOKEN`) and reads the key inside the shell,
@@ -28,6 +30,11 @@ AI agents can lease devices, and the operational pieces to run it as a service.
 
 ### Added
 
+- **Signing in.** Local accounts with passwords, LDAP / Active Directory and any number of OIDC
+  providers, with directory groups mapped to roles. Browser sessions use an `HttpOnly` cookie
+  with a CSRF token; failed sign-ins lock a username out for a while. People get personal API
+  tokens (`mshctl login`), and admins manage them with `/api/v1/admin/users` and `mshctl users`.
+  See `docs/authentication.md`.
 - **Identity and quotas.** Named clients with roles (`admin`, `user`, `viewer`, `provider`),
   per-client quotas for concurrent devices, session lifetime and queue priority, an audit log
   at `GET /api/v1/audit`, `GET /api/v1/me`, and an admin API to create, update, rotate and

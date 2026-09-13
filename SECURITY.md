@@ -20,17 +20,18 @@ branches yet.
 Marathon Shepherd brokers access to real Android devices. Understanding its trust
 boundaries matters more than any single CVE.
 
-### The Manager API needs an API key
+### The Manager API needs a key or a signed-in person
 
-Since 0.2.0 every `/api/v1/...` call and the MCP endpoint `/mcp` require
-`Authorization: Bearer <key>`. A call without one gets `401`.
+Since 0.2.0 every `/api/v1/...` call needs `Authorization: Bearer <key>` or a signed-in browser
+session, and the MCP endpoint `/mcp` needs a bearer key. A call without either gets `401`.
 
 - Keys are `msh_` plus 40 random characters from a cryptographically secure source, and
   only their SHA-256 digest is stored. A key is shown once, at creation or rotation.
-- On first start the manager creates an admin key, prints it once on stdout and writes it
-  to `<dataDir>/initial-admin-token` with owner-only permissions. Create a client per
-  consumer with it, then delete that file. `MSH_ADMIN_TOKEN` provisions a known admin key
-  instead, for deployments that manage secrets themselves.
+- On first start the manager creates the user `admin` with a one-time password, prints it
+  once on stdout and writes it to `<dataDir>/initial-admin-password` with owner-only
+  permissions. It must be changed at first sign-in; delete the file afterwards.
+  `MSH_ADMIN_PASSWORD` chooses the first password instead, and `MSH_ADMIN_TOKEN` provisions a
+  static admin API key for automation.
 - Each client has a role — `admin`, `user`, `viewer` or `provider` — and optional quotas
   (devices held at once, session lifetime, queue priority). A session may only be waited
   on, extended or released by its owner or an admin.
@@ -50,6 +51,31 @@ What is still open by design:
 - Adapter bearer secrets are redacted (`<redacted>`) in `GET /api/v1/config`, so an admin
   key does not hand out the credentials for every adapter. A `PUT` that echoes the
   placeholder back keeps the stored secret.
+
+### How people sign in
+
+- Local passwords are stored as PBKDF2-HMAC-SHA256 hashes with a per-password salt and 600,000
+  iterations. An unknown username takes as long to refuse as a wrong password, and both get the
+  same message.
+- After `auth.sessions.maxFailedAttempts` failures in a row a username is locked for
+  `lockoutMinutes`; an address gets four times as many tries. The counters live in memory.
+- Browser sessions are random ids in an `HttpOnly`, `SameSite=Lax` cookie, `Secure` when
+  `auth.publicUrl` is https. The manager stores only their SHA-256 digest. Changes made with
+  the cookie must carry the session's CSRF token in `X-CSRF-Token`. Sessions end after an idle
+  timeout and a maximum lifetime, at sign-out, on a password change and when the user is disabled.
+- LDAP sign-in binds as the person with the password they typed; usernames go into search
+  filters as escaped parameters, and empty passwords are refused before any bind. Use `ldaps://`
+  or `startTls`: over plain `ldap://` passwords cross the network in clear, and the manager warns
+  about it at startup.
+- OIDC sign-in uses the authorization code flow with PKCE, a single-use state and a nonce. ID
+  tokens are accepted only with an RSA or EC signature from the provider's published keys, and
+  with the expected issuer, audience and expiry. People are matched by provider and subject, never
+  by username alone, so an OIDC account cannot take over a local one.
+- A directory decides a person's role at every sign-in when a role mapping is configured. An
+  existing browser session is not ended when someone leaves a directory group: it ends by its
+  idle timeout or lifetime, or when an admin disables the user.
+- Personal tokens act as their person and stop working when revoked, expired, when the person is
+  disabled, and while their password is a one-time password.
 
 ### Agents get a key like anyone else
 

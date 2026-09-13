@@ -15,6 +15,7 @@ import dev.shepherd.protocol.ShepherdApiException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.io.IOException
 import java.nio.channels.UnresolvedAddressException
 
@@ -43,8 +44,8 @@ class MshCtl : CliktCommand(name = "mshctl") {
         versionOption(BuildInfo.version)
     }
 
-    override fun help(context: Context): String = "Marathon Shepherd CLI: sessions, devices, providers, events and API clients. " +
-        "Set MSH_URL and MSH_TOKEN, or pass --manager and --token to each command."
+    override fun help(context: Context): String = "Marathon Shepherd CLI: sessions, devices, providers, events, people and API clients. " +
+        "Set MSH_URL, then run mshctl login or set MSH_TOKEN (or pass --manager and --token to each command)."
 
     override fun run() = Unit
 }
@@ -66,7 +67,12 @@ fun mshctl(clients: ClientFactory = ClientFactory { managerUrl, token -> Shepher
         WhoAmICommand(clients),
         ClientsCommand(clients).subcommands(ClientCreate(clients), ClientUpdate(clients), ClientRotate(clients), ClientRevoke(clients)),
         AuditCommand(clients),
-        ConfigCommand(clients).subcommands(ConfigReload(clients))
+        ConfigCommand(clients).subcommands(ConfigReload(clients)),
+        LoginCommand(clients),
+        LogoutCommand(clients),
+        PasswordCommand(clients),
+        TokensCommand(clients).subcommands(TokenCreate(clients), TokenRevoke(clients)),
+        UsersCommand(clients).subcommands(UserCreate(clients), UserUpdate(clients), UserResetPassword(clients), UserDisable(clients))
     )
 
 fun main(args: Array<String>) = mshctl().main(args)
@@ -80,13 +86,28 @@ abstract class ShepherdCommand(
     private val helpText: String,
     private val clients: ClientFactory
 ) : CliktCommand(name = name) {
-    private val managerUrl: String by option(
+    protected val managerUrl: String by option(
         "--manager",
         "-s",
         envvar = "MSH_URL",
         help = "Manager URL (default: \$MSH_URL or $DEFAULT_MANAGER_URL)"
     ).default(DEFAULT_MANAGER_URL)
-    private val token: String? by option("--token", envvar = "MSH_TOKEN", help = "API key (default: \$MSH_TOKEN)")
+    private val token: String? by option(
+        "--token",
+        envvar = "MSH_TOKEN",
+        help = "API key (default: \$MSH_TOKEN, then the token saved by mshctl login)"
+    )
+    private val credentialsPath: String? by option(
+        "--credentials-file",
+        envvar = "MSH_CREDENTIALS_FILE",
+        help = "Where mshctl login keeps its token"
+    )
+    protected val credentials: CredentialsFile by lazy {
+        CredentialsFile(credentialsPath?.let { path -> File(path) } ?: CredentialsFile.defaultLocation())
+    }
+
+    /** False for commands that sign in rather than use a key. */
+    protected open val needsCredentials: Boolean = true
     protected val jsonOutput: Boolean by option("--json", help = "Print JSON instead of text").flag()
 
     override fun help(context: Context): String = helpText
@@ -97,7 +118,9 @@ abstract class ShepherdCommand(
             return
         }
         runBlocking {
-            clients.create(managerUrl, token?.takeIf { key -> key.isNotBlank() }).use { client ->
+            val key: String? = token?.takeIf { value -> value.isNotBlank() }
+                ?: credentials.takeIf { needsCredentials }?.read()?.takeIf { saved -> saved.manager == managerUrl }?.token
+            clients.create(managerUrl, key).use { client ->
                 try {
                     execute(client)
                 } catch (refused: ShepherdApiException) {
@@ -121,7 +144,7 @@ abstract class ShepherdCommand(
     private fun describe(refused: ShepherdApiException): String {
         val message: String = refused.message.orEmpty()
         return when (refused.status) {
-            401 -> "${message.trimEnd('.')}. Set MSH_TOKEN or pass --token."
+            401 -> "${message.trimEnd('.')}. Run mshctl login, set MSH_TOKEN or pass --token."
             403 -> "$message (the API key's role does not allow this)"
             else -> message
         }

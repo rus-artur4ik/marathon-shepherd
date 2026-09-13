@@ -66,7 +66,10 @@ services:
       MSH_PORT: "6037"
       MSH_CONFIG: "/etc/msh/msh.yaml"
       MSH_DATA_DIR: "/var/lib/msh"
-      # Optional known admin API key; otherwise one is generated on first start.
+      # Optional first password of the `admin` user; otherwise a one-time password is
+      # generated on first start and printed once.
+      MSH_ADMIN_PASSWORD: "${MSH_ADMIN_PASSWORD:-}"
+      # Optional static admin API key for automation.
       MSH_ADMIN_TOKEN: "${MSH_ADMIN_TOKEN:-}"
       ADAPTER_SECRET: "${ADAPTER_SECRET:?ADAPTER_SECRET must be set}"
       MSH_ACCESS_HOST: "${MSH_ACCESS_HOST:?MSH_ACCESS_HOST must be set}"

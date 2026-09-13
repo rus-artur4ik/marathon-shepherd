@@ -17,8 +17,11 @@ services:
     container_name: msh-manager
     restart: unless-stopped
     environment:
-      # Optional known admin API key. Without it the manager creates one on first start,
-      # prints it once and stores it in /var/lib/msh/initial-admin-token.
+      # Optional first password of the `admin` user. Without it the manager generates a
+      # one-time password on first start, prints it once and stores it in
+      # /var/lib/msh/initial-admin-password.
+      MSH_ADMIN_PASSWORD: "${MSH_ADMIN_PASSWORD:-}"
+      # Optional static admin API key for automation.
       MSH_ADMIN_TOKEN: "${MSH_ADMIN_TOKEN:-}"
       # Optional Postgres backend, e.g.
       # jdbc:postgresql://db:5432/shepherd?user=shepherd&password=...

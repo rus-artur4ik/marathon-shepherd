@@ -137,7 +137,11 @@ class HealthCommand(clients: ClientFactory) : ShepherdCommand("health", "Check m
     }
 }
 
-class WhoAmICommand(clients: ClientFactory) : ShepherdCommand("whoami", "Show the API key's client, role, quota and usage", clients) {
+class WhoAmICommand(clients: ClientFactory) : ShepherdCommand(
+    "whoami",
+    "Show who the key or saved token belongs to, with role, quota and usage",
+    clients
+) {
     override suspend fun execute(client: ShepherdClient) {
         val me: WhoAmIResponse = client.whoAmI()
         if (jsonOutput) {

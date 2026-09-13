@@ -12,6 +12,7 @@ import dev.shepherd.domain.errors.ResourceNotFoundException
 import dev.shepherd.domain.model.ApiSelector
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionOptions
+import dev.shepherd.infra.auth.Accounts
 import dev.shepherd.protocol.CreateSessionRequest
 import dev.shepherd.protocol.DeviceDto
 import dev.shepherd.protocol.DeviceQuery
@@ -23,6 +24,8 @@ import dev.shepherd.protocol.WhoAmIResponse
 import io.ktor.server.application.ApplicationCall
 
 private const val OWNER_ME: String = "me"
+private const val KIND_USER: String = "user"
+private const val KIND_CLIENT: String = "client"
 
 /**
  * The manager's own operations, acting as [actor]. The REST routes and the embedded MCP endpoint
@@ -39,7 +42,8 @@ class LocalShepherdApi(private val services: ManagerServices, private val actor:
             name = actor.name,
             role = actor.role.wireName,
             quota = actor.quota.toDto(),
-            usage = UsageDto(activeSessions = usage.activeSessions, devices = usage.devices)
+            usage = UsageDto(activeSessions = usage.activeSessions, devices = usage.devices),
+            kind = if (actor.id.startsWith(Accounts.USER_ID_PREFIX)) KIND_USER else KIND_CLIENT
         )
     }
 

@@ -18,6 +18,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -25,13 +27,16 @@ import kotlin.test.assertFalse
 
 class MshCtlTest {
 
+    @TempDir
+    lateinit var tempDir: File
+
     private val requests = mutableListOf<HttpRequestData>()
     private val bodies = mutableListOf<String>()
 
     @Test
     fun `create sends the options it was given and prints the session`() {
         val result = cli { respondJson(SESSION_READY, HttpStatusCode.Created) }
-            .test("create --devices 2 --api 34 --label form=tablet --meta build=42 --name nightly --token msh_key")
+            .runCli("create --devices 2 --api 34 --label form=tablet --meta build=42 --name nightly --token msh_key")
 
         assertEquals(0, result.statusCode, result.stderr)
         assertContains(result.stdout, "Session sess_1 (READY)")
@@ -48,7 +53,7 @@ class MshCtlTest {
     @Test
     fun `json output is the session object`() {
         val result = cli { respondJson(SESSION_READY, HttpStatusCode.Created) }
-            .test("create --json --devices 1 --api 34 --device-type emulator --ttl 120")
+            .runCli("create --json --devices 1 --api 34 --device-type emulator --ttl 120")
 
         assertEquals("sess_1", Json.parseToJsonElement(result.stdout).jsonObject["id"]?.jsonPrimitive?.content)
     }
@@ -64,7 +69,7 @@ class MshCtlTest {
             } else {
                 respondJson(SESSION_PENDING, HttpStatusCode.Created)
             }
-        }.test("create --wait")
+        }.runCli("create --wait")
 
         assertEquals(0, result.statusCode, result.stderr)
         assertContains(result.stderr, "Session sess_1 is queued")
@@ -77,9 +82,9 @@ class MshCtlTest {
             if (request.method == HttpMethod.Delete) respondJson("""{"status":"released"}""") else respondJson(SESSION_READY)
         }
 
-        val shown = cli(handler).test("show sess_1")
-        val released = cli(handler).test("release --id sess_1")
-        val missing = cli(handler).test("show")
+        val shown = cli(handler).runCli("show sess_1")
+        val released = cli(handler).runCli("release --id sess_1")
+        val missing = cli(handler).runCli("show")
 
         assertEquals(0, shown.statusCode, shown.stderr)
         assertContains(released.stdout, "Session sess_1 released.")
@@ -90,16 +95,16 @@ class MshCtlTest {
 
     @Test
     fun `a rejected key explains how to pass one`() {
-        val result = cli { respondJson("""{"error":"Missing or invalid API key"}""", HttpStatusCode.Unauthorized) }.test("list")
+        val result = cli { respondJson("""{"error":"Missing or invalid API key"}""", HttpStatusCode.Unauthorized) }.runCli("list")
 
         assertEquals(1, result.statusCode)
-        assertContains(result.stderr, "Missing or invalid API key. Set MSH_TOKEN or pass --token.")
+        assertContains(result.stderr, "Missing or invalid API key. Run mshctl login, set MSH_TOKEN or pass --token.")
     }
 
     @Test
     fun `the manager URL and key come from the environment`() {
         val result = cli { respondJson("[]") }
-            .test("list --mine", envvars = mapOf("MSH_URL" to "http://manager.example:7000", "MSH_TOKEN" to "msh_env"))
+            .runCli("list --mine", envvars = mapOf("MSH_URL" to "http://manager.example:7000", "MSH_TOKEN" to "msh_env"))
 
         assertEquals(0, result.statusCode, result.stderr)
         assertContains(result.stdout, "No active sessions.")
@@ -110,7 +115,7 @@ class MshCtlTest {
 
     @Test
     fun `health fails when no provider is healthy`() {
-        val result = cli { respondJson(UNHEALTHY, HttpStatusCode.ServiceUnavailable) }.test("health")
+        val result = cli { respondJson(UNHEALTHY, HttpStatusCode.ServiceUnavailable) }.runCli("health")
 
         assertEquals(1, result.statusCode)
         assertContains(result.stdout, "Health: unhealthy")
@@ -119,7 +124,7 @@ class MshCtlTest {
 
     @Test
     fun `devices lists individual devices`() {
-        val result = cli { respondJson(DEVICES) }.test("devices --state available --label form=phone")
+        val result = cli { respondJson(DEVICES) }.runCli("devices --state available --label form=phone")
 
         assertEquals(0, result.statusCode, result.stderr)
         assertContains(result.stdout, "rack-1:serial-1  available  physical  34   Google Pixel 8")
@@ -130,7 +135,7 @@ class MshCtlTest {
 
     @Test
     fun `clients update keeps the quota limits it was not asked to change`() {
-        val result = cli { respondJson(CLIENT) }.test("clients update cl_1 --max-devices none --max-lifetime 3600")
+        val result = cli { respondJson(CLIENT) }.runCli("clients update cl_1 --max-devices none --max-lifetime 3600")
 
         assertEquals(0, result.statusCode, result.stderr)
         val patch: HttpRequestData = requests.single { request -> request.method == HttpMethod.Patch }
@@ -143,12 +148,16 @@ class MshCtlTest {
 
     @Test
     fun `clients update refuses to send an empty change`() {
-        val result = cli { respondJson(CLIENT) }.test("clients update cl_1")
+        val result = cli { respondJson(CLIENT) }.runCli("clients update cl_1")
 
         assertEquals(1, result.statusCode)
         assertContains(result.stderr, "Nothing to change")
         assertEquals(emptyList(), requests)
     }
+
+    /** Runs mshctl with its credentials file in the test directory, never the real one in the home directory. */
+    private fun CliktCommand.runCli(argv: String, envvars: Map<String, String> = emptyMap()) =
+        test(argv, envvars = mapOf("MSH_CREDENTIALS_FILE" to File(tempDir, "credentials.json").path) + envvars)
 
     private fun cli(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): CliktCommand {
         val engine = MockEngine { request ->

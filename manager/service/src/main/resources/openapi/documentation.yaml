@@ -21,6 +21,7 @@ servers:
   - url: /
 security:
   - bearerAuth: []
+  - sessionCookie: []
 tags:
   - name: sessions
     description: Request devices, wait for them and give them back.
@@ -36,6 +37,8 @@ tags:
     description: Live stream of what the manager does.
   - name: mcp
     description: Model Context Protocol endpoint for AI agents
+  - name: people
+    description: Signing in, users and personal API tokens.
   - name: operations
     description: Probes, metrics and this document.
 paths:
@@ -840,12 +843,476 @@ paths:
           description: A notification was accepted; there is no body.
         "404":
           description: The endpoint is turned off (`mcp.enabled` is false).
+  /api/v1/auth/methods:
+    get:
+      tags: [people]
+      operationId: authMethods
+      summary: How people can sign in
+      description: Local passwords, LDAP and the OIDC providers configured in msh.yaml, for a sign-in page.
+      security: []
+      responses:
+        "200":
+          description: The sign-in methods.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMethods"
+  /api/v1/auth/login:
+    post:
+      tags: [people]
+      operationId: login
+      summary: Sign in with a username and password
+      description: |
+        Checks a local account, then LDAP, and starts a browser session. The answer sets the
+        `msh_session` cookie and carries the CSRF token that every change made with that cookie must
+        send in `X-CSRF-Token`. Repeated failures lock the username out for a while.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebSession"
+        "401":
+          $ref: "#/components/responses/SignInFailed"
+        "429":
+          $ref: "#/components/responses/LockedOut"
+  /api/v1/auth/tokens:
+    post:
+      tags: [people]
+      operationId: loginForToken
+      summary: Sign in with a password and get a personal API token
+      description: For mshctl and scripts. The token is shown once; send it as a bearer key.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenLoginRequest"
+      responses:
+        "201":
+          description: The token, shown once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedToken"
+        "401":
+          $ref: "#/components/responses/SignInFailed"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/LockedOut"
+  /api/v1/auth/password:
+    post:
+      tags: [people]
+      operationId: changePasswordWithLogin
+      summary: Change a password without a session
+      description: For someone holding a temporary password who signs in from the command line.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordWithLoginRequest"
+      responses:
+        "204":
+          description: Changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/SignInFailed"
+        "429":
+          $ref: "#/components/responses/LockedOut"
+  /api/v1/auth/session:
+    get:
+      tags: [people]
+      operationId: browserSession
+      summary: The signed-in browser session
+      description: Who is signed in and the CSRF token for changes. Only for requests carrying the session cookie.
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/auth/logout:
+    post:
+      tags: [people]
+      operationId: logout
+      summary: End the browser session
+      responses:
+        "204":
+          description: Signed out; the cookie is cleared.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /auth/oidc/{provider}/login:
+    parameters:
+      - $ref: "#/components/parameters/OidcProvider"
+    get:
+      tags: [people]
+      operationId: oidcLogin
+      summary: Start signing in with an OIDC provider
+      security: []
+      parameters:
+        - name: returnTo
+          in: query
+          description: A path on this manager to land on after signing in.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: To the provider's sign-in page.
+        "401":
+          $ref: "#/components/responses/SignInFailed"
+  /auth/oidc/{provider}/callback:
+    parameters:
+      - $ref: "#/components/parameters/OidcProvider"
+    get:
+      tags: [people]
+      operationId: oidcCallback
+      summary: Where the OIDC provider sends the browser back
+      description: Register `<auth.publicUrl>/auth/oidc/<id>/callback` as the redirect URI with the provider.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Signed in; the session cookie is set and the browser goes to `returnTo`.
+        "401":
+          description: The sign-in failed; the reason is in the plain-text body.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/me/password:
+    post:
+      tags: [people]
+      operationId: changePassword
+      summary: Change your own password
+      description: Local accounts only. Other browser sessions of the account end.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/me/tokens:
+    get:
+      tags: [people]
+      operationId: listPersonalTokens
+      summary: Your personal API tokens
+      responses:
+        "200":
+          description: Tokens that are not revoked.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PersonalToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [people]
+      operationId: createPersonalToken
+      summary: Create a personal API token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: The token, shown once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/me/tokens/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TokenId"
+    delete:
+      tags: [people]
+      operationId: revokePersonalToken
+      summary: Revoke one of your personal API tokens
+      responses:
+        "200":
+          description: The revoked token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/admin/users:
+    get:
+      tags: [people]
+      operationId: listUsers
+      summary: People who sign in (admin)
+      parameters:
+        - name: includeDisabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [people]
+      operationId: createUser
+      summary: Create a local user (admin)
+      description: Without a password a temporary one is generated. Either way it must be changed at first sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: The user, and the temporary password when one was generated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedUser"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/admin/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [people]
+      operationId: getUser
+      summary: One user (admin)
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [people]
+      operationId: updateUser
+      summary: Change a user's profile, role, quota or whether they are active (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [people]
+      operationId: disableUser
+      summary: Disable a user (admin)
+      description: Signs them out everywhere; their personal tokens stop working. `releaseSessions=true` also frees their devices.
+      parameters:
+        - name: releaseSessions
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The disabled user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/admin/users/{id}/password:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [people]
+      operationId: resetUserPassword
+      summary: Reset a local user's password (admin)
+      description: The new password must be changed at the next sign-in. Without a body a temporary one is generated.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "200":
+          description: The temporary password when one was generated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordReset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/admin/users/{id}/tokens:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [people]
+      operationId: listUserTokens
+      summary: A user's personal tokens, revoked ones included (admin)
+      responses:
+        "200":
+          description: The tokens.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PersonalToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/admin/users/{id}/tokens/{tokenId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+      - name: tokenId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [people]
+      operationId: revokeUserToken
+      summary: Revoke a user's personal token (admin)
+      responses:
+        "200":
+          description: The revoked token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       description: "An API key: `Authorization: Bearer msh_...`."
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: msh_session
+      description: |
+        The web UI's session, from POST /api/v1/auth/login or an OIDC sign-in. Requests that change
+        anything must also send the session's CSRF token in the `X-CSRF-Token` header.
   parameters:
     DeviceId:
       name: id
@@ -869,6 +1336,27 @@ components:
       schema:
         type: string
       example: sess_a1b2c3d4
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User id, e.g. `usr_...`.
+      schema:
+        type: string
+    TokenId:
+      name: id
+      in: path
+      required: true
+      description: Personal token id, e.g. `tok_...`.
+      schema:
+        type: string
+    OidcProvider:
+      name: provider
+      in: path
+      required: true
+      description: The id of an OIDC provider under `auth.oidc` in msh.yaml.
+      schema:
+        type: string
   responses:
     Unauthorized:
       description: No API key, or an unknown or revoked one.
@@ -912,6 +1400,22 @@ components:
             $ref: "#/components/schemas/Error"
     Unavailable:
       description: The request cannot be served, e.g. no registered device matches it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SignInFailed:
+      description: Wrong username or password, or the directory refused the sign-in. The message never says whether the account exists.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    LockedOut:
+      description: Too many failed sign-ins for this username or address; try again after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
       content:
         application/json:
           schema:
@@ -1667,6 +2171,10 @@ components:
           type: string
         name:
           type: string
+        kind:
+          type: string
+          enum: [user, client]
+          description: A person (signed in or with a personal token) or an API client.
         role:
           $ref: "#/components/schemas/Role"
         quota:
@@ -1712,3 +2220,214 @@ components:
         nextBefore:
           type: integer
           format: int64
+    User:
+      type: object
+      required: [id, username, source, role, active, createdAt]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+        email:
+          type: string
+        source:
+          type: string
+          enum: [local, ldap, oidc]
+        provider:
+          type: string
+          description: The OIDC provider id, or `ldap`.
+        role:
+          $ref: "#/components/schemas/Role"
+        roleManagedByProvider:
+          type: boolean
+          description: Directory groups decide the role at every sign-in, so it cannot be edited.
+        quota:
+          $ref: "#/components/schemas/Quota"
+        effectiveQuota:
+          $ref: "#/components/schemas/Quota"
+        active:
+          type: boolean
+        mustChangePassword:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        lastLoginAt:
+          type: string
+          format: date-time
+        disabledAt:
+          type: string
+          format: date-time
+    CreateUserRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          description: Omit to have a temporary password generated.
+        displayName:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        quota:
+          $ref: "#/components/schemas/Quota"
+    CreatedUser:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        temporaryPassword:
+          type: string
+          description: Only when generated; shown once.
+    UpdateUserRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        quota:
+          $ref: "#/components/schemas/Quota"
+        active:
+          type: boolean
+    ResetPasswordRequest:
+      type: object
+      properties:
+        password:
+          type: string
+    PasswordReset:
+      type: object
+      properties:
+        temporaryPassword:
+          type: string
+    AuthMethods:
+      type: object
+      required: [local, ldap]
+      properties:
+        local:
+          type: boolean
+        ldap:
+          type: boolean
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthProvider"
+    AuthProvider:
+      type: object
+      required: [id, displayName, loginUrl]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        loginUrl:
+          type: string
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+    WebSession:
+      type: object
+      required: [user, csrfToken, expiresAt]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        csrfToken:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+    ChangePasswordWithLoginRequest:
+      type: object
+      required: [username, currentPassword, newPassword]
+      properties:
+        username:
+          type: string
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+    PersonalToken:
+      type: object
+      required: [id, name, prefix, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        expiresInDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+    TokenLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        name:
+          type: string
+          default: mshctl
+        expiresInDays:
+          type: integer
+          default: 90
+    IssuedToken:
+      type: object
+      required: [token, secret]
+      properties:
+        token:
+          $ref: "#/components/schemas/PersonalToken"
+        secret:
+          type: string
+          description: Shown once; send it as a bearer key.

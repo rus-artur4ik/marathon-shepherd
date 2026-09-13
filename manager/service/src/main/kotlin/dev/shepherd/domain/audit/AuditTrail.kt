@@ -28,6 +28,16 @@ object AuditActions {
     const val CLIENT_REVOKE = "client.revoke"
     const val CONFIG_UPDATE = "config.update"
     const val CONFIG_RELOAD = "config.reload"
+    const val AUTH_LOGIN = "auth.login"
+    const val AUTH_LOGOUT = "auth.logout"
+    const val USER_CREATE = "user.create"
+    const val USER_UPDATE = "user.update"
+    const val USER_DISABLE = "user.disable"
+    const val USER_ENABLE = "user.enable"
+    const val USER_PASSWORD_CHANGE = "user.password.change"
+    const val USER_PASSWORD_RESET = "user.password.reset"
+    const val TOKEN_CREATE = "token.create"
+    const val TOKEN_REVOKE = "token.revoke"
 }
 
 /** Durable record of who did what. Recording must never fail the operation it describes. */

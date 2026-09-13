@@ -23,6 +23,8 @@ dependencies {
     implementation(libs.ktor.server.status.pages)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.auth)
+    // OIDC ID token verification
+    implementation(libs.nimbus.jose.jwt)
     implementation(libs.ktor.server.metrics.micrometer)
     implementation(libs.ktor.server.swagger)
     implementation(libs.micrometer.registry.prometheus)
@@ -57,6 +59,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.lincheck)
     testImplementation(libs.embedded.postgres)
+    // An in-memory directory server for the LDAP sign-in tests
+    testImplementation(libs.unboundid.ldapsdk)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

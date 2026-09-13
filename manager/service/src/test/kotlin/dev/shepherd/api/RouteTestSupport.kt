@@ -19,7 +19,17 @@ import dev.shepherd.domain.provider.ProviderRegistry
 import dev.shepherd.infra.audit.AuditStore
 import dev.shepherd.infra.audit.StoreAuditTrail
 import dev.shepherd.infra.auth.AccessControl
+import dev.shepherd.infra.auth.Accounts
 import dev.shepherd.infra.auth.ClientStore
+import dev.shepherd.infra.auth.LdapSignIn
+import dev.shepherd.infra.auth.LoginThrottle
+import dev.shepherd.infra.auth.OidcSignIn
+import dev.shepherd.infra.auth.PasswordHasher
+import dev.shepherd.infra.auth.SignIn
+import dev.shepherd.infra.auth.UserRecord
+import dev.shepherd.infra.auth.UserStore
+import dev.shepherd.infra.auth.UserTokenStore
+import dev.shepherd.infra.auth.WebSessionStore
 import dev.shepherd.infra.config.ConfigStore
 import dev.shepherd.infra.devices.MaintenanceStore
 import dev.shepherd.infra.metrics.MicrometerManagerMetrics
@@ -28,6 +38,7 @@ import dev.shepherd.infra.state.StateStore
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import java.io.File
+import java.time.Duration
 
 internal fun createRouteProviderRegistry(tempDir: File, configName: String, providers: List<DeviceProvider>): ProviderRegistry {
     val configFile = File(tempDir, configName)
@@ -132,9 +143,13 @@ internal fun managerServices(
     providerRegistry: ProviderRegistry,
     stateStore: StateStore,
     sessionManager: SessionManager? = null,
-    metrics: MicrometerManagerMetrics = MicrometerManagerMetrics()
+    metrics: MicrometerManagerMetrics = MicrometerManagerMetrics(),
+    signInHttpClient: HttpClient = HttpClient(CIO)
 ): ManagerServices {
     val auditStore = AuditStore(stateStore.db)
+    val authConfig = { providerRegistry.currentConfig().auth }
+    val userStore = UserStore(stateStore.db)
+    val webSessionStore = WebSessionStore(stateStore.db)
     val audit = StoreAuditTrail(auditStore)
     val eventBus = EventBus()
     val maintenanceStore = MaintenanceStore(stateStore.db)
@@ -143,6 +158,17 @@ internal fun managerServices(
         sessionCounts = { stateStore.countActiveSessions() },
         metrics = metrics,
         events = eventBus
+    )
+    val accounts = Accounts(
+        users = userStore,
+        tokens = UserTokenStore(stateStore.db),
+        webSessions = webSessionStore,
+        passwords = PasswordHasher(iterations = TEST_PASSWORD_ITERATIONS),
+        audit = audit,
+        authConfig = authConfig,
+        quotaDefaults = { providerRegistry.currentConfig().quotas.defaults.toQuota() },
+        // The static test admin token always exists.
+        otherAdmins = { 1L }
     )
     return ManagerServices(
         providerRegistry = providerRegistry,
@@ -160,7 +186,8 @@ internal fun managerServices(
             clients = ClientStore(stateStore.db),
             audit = audit,
             quotaDefaults = { providerRegistry.currentConfig().quotas.defaults.toQuota() },
-            staticAdminToken = TEST_ADMIN_TOKEN
+            staticAdminToken = TEST_ADMIN_TOKEN,
+            otherAdmins = { userStore.countActiveAdmins() }
         ),
         auditStore = auditStore,
         audit = audit,
@@ -179,6 +206,19 @@ internal fun managerServices(
             audit = audit,
             events = eventBus
         ),
+        accounts = accounts,
+        signIn = SignIn(
+            accounts = accounts,
+            webSessions = webSessionStore,
+            ldap = LdapSignIn(),
+            oidc = OidcSignIn(signInHttpClient, authConfig),
+            throttle = LoginThrottle(
+                maxFailures = { authConfig().sessions.maxFailedAttempts },
+                lockout = { Duration.ofMinutes(authConfig().sessions.lockoutMinutes) }
+            ),
+            authConfig = authConfig,
+            audit = audit
+        ),
         metrics = metrics
     )
 }
@@ -186,3 +226,29 @@ internal fun managerServices(
 /** Creates a client straight through [AccessControl] and returns its API key. */
 internal suspend fun ManagerServices.issueKey(name: String, role: Role = Role.USER, quota: ClientQuota = ClientQuota.UNLIMITED): String =
     accessControl.createClient(Actor.SYSTEM, name, role, description = null, quota = quota).apiKey
+
+/** Real PBKDF2, but cheap enough that tests can sign in hundreds of times. */
+internal const val TEST_PASSWORD_ITERATIONS: Int = 1_000
+
+/** A local user who can sign in with [password] straight away: the one-time password is already changed. */
+internal suspend fun ManagerServices.createUser(
+    username: String,
+    password: String = "correct horse battery",
+    role: Role = Role.USER
+): UserRecord {
+    val temporary: String = checkNotNull(
+        accounts.createLocalUser(
+            Actor.SYSTEM,
+            username,
+            password = null,
+            displayName = null,
+            email = null,
+            role = role,
+            quota = ClientQuota.UNLIMITED
+        )
+            .temporaryPassword
+    )
+    val created: UserRecord = checkNotNull(accounts.findByUsername(username))
+    accounts.changePassword(created, temporary, password)
+    return checkNotNull(accounts.findByUsername(username))
+}

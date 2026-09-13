@@ -5,21 +5,21 @@ Reach the API:
   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "marathon-shepherd.fullname" . }} {{ .Values.service.port }}
   export MSH_URL=http://localhost:{{ .Values.service.port }}
 
-{{ if or .Values.adminToken.value .Values.adminToken.existingSecret -}}
-The admin key is the one you provided in adminToken.
+{{ if or .Values.adminPassword.value .Values.adminPassword.existingSecret -}}
+Sign in as `admin` with the password you provided in adminPassword.
 {{- else -}}
-The manager created an admin key on first start and printed it once:
+The manager created the user `admin` with a one-time password and printed it once:
 
-  kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "marathon-shepherd.fullname" . }} | grep -A4 "admin API key"
+  kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "marathon-shepherd.fullname" . }} | grep -A3 "first admin account"
 
-A copy is in /var/lib/msh/initial-admin-token inside the pod. Create a client per consumer
-with it, then delete that file (see docs/clients.md).
+A copy is in /var/lib/msh/initial-admin-password inside the pod. Sign in, choose your own
+password, then delete that file.
 {{- end }}
 
-  export MSH_TOKEN=<key>
+  mshctl login --username admin
   mshctl health
   mshctl devices
 {{ if not .Values.persistence.enabled }}
-WARNING: persistence is disabled. Sessions and the generated admin key are lost when the pod
+WARNING: persistence is disabled. Sessions, users and the generated admin password are lost when the pod
 restarts. Set persistence.enabled=true, or point database.url at Postgres.
 {{- end }}

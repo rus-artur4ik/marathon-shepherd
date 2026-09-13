@@ -23,8 +23,15 @@ config:
         url: "http://192.168.50.100:7037"
         secret: "change-me"
 
-# MSH_ADMIN_TOKEN. Leave empty and the manager creates an admin key on first start,
-# prints it once and writes it to <dataDir>/initial-admin-token.
+# MSH_ADMIN_PASSWORD: the first password of the `admin` user. Leave empty and the manager
+# generates a one-time password on first start, prints it once and writes it to
+# <dataDir>/initial-admin-password.
+adminPassword:
+  value: ""
+  existingSecret: ""
+  key: admin-password
+
+# MSH_ADMIN_TOKEN: a static admin API key for automation. Optional.
 adminToken:
   value: ""
   existingSecret: ""
@@ -38,7 +45,7 @@ database:
   existingSecret: ""
   key: url
 
-# The data directory: SQLite state and the generated admin key.
+# The data directory: SQLite state and the generated admin password.
 persistence:
   enabled: true
   existingClaim: ""
@@ -86,6 +93,11 @@ securityContext:
   capabilities:
     drop: ["ALL"]
 
+# Secrets referenced from msh.yaml, e.g. an OIDC client secret (auth.oidc[].clientSecretEnv)
+# or the LDAP bind password (auth.ldap.bindPasswordEnv):
+#   - name: MSH_OIDC_KEYCLOAK_SECRET
+#     valueFrom:
+#       secretKeyRef: { name: shepherd-oidc, key: client-secret }
 extraEnv: []
 nodeSelector: {}
 tolerations: []

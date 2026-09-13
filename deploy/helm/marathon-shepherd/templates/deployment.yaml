@@ -44,6 +44,13 @@ spec:
               value: /etc/msh/{{ .Values.config.key }}
             - name: MSH_DATA_DIR
               value: /var/lib/msh
+            {{- if or .Values.adminPassword.value .Values.adminPassword.existingSecret }}
+            - name: MSH_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminPassword.existingSecret | default (include "marathon-shepherd.fullname" .) }}
+                  key: {{ .Values.adminPassword.key }}
+            {{- end }}
             {{- if or .Values.adminToken.value .Values.adminToken.existingSecret }}
             - name: MSH_ADMIN_TOKEN
               valueFrom:
@@ -102,7 +109,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "marathon-shepherd.claim" . }}
           {{- else }}
-          # Without a volume the session database and the generated admin key are lost on restart.
+          # Without a volume the database and the generated admin password are lost on restart.
           emptyDir: {}
           {{- end }}
         - name: tmp

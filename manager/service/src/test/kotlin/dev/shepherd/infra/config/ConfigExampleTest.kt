@@ -37,6 +37,8 @@ class ConfigExampleTest {
         assertEquals(30, config.sessions.retentionDays)
         assertEquals(2, config.mcp.maxDevicesPerSession)
         assertEquals(900, config.mcp.idleTimeoutSeconds)
+        assertEquals("https://shepherd.example.com", config.auth.publicUrl)
+        assertEquals(10, config.auth.local.minPasswordLength)
     }
 
     private companion object {

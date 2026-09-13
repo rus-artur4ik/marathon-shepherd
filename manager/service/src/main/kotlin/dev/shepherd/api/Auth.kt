@@ -4,6 +4,8 @@ import dev.shepherd.domain.auth.Actor
 import dev.shepherd.domain.auth.Role
 import dev.shepherd.domain.errors.AccessDeniedException
 import dev.shepherd.infra.auth.AccessControl
+import dev.shepherd.infra.auth.Accounts
+import dev.shepherd.infra.auth.SignIn
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
@@ -23,19 +25,23 @@ internal val READER_ROLES: Array<Role> = arrayOf(Role.ADMIN, Role.USER, Role.VIE
 /** Roles that may hold devices. */
 internal val HOLDER_ROLES: Array<Role> = arrayOf(Role.ADMIN, Role.USER)
 
-fun Application.configureApiAuth(accessControl: AccessControl) {
+fun Application.configureApiAuth(accessControl: AccessControl, accounts: Accounts, signIn: SignIn) {
     install(Authentication) {
+        // A bearer key is a client key, MSH_ADMIN_TOKEN or a person's personal token.
         bearer(API_AUTH) {
             realm = REALM
             authenticate { credential ->
-                accessControl.authenticate(credential.token)?.copy(origin = request.origin.remoteHost)
+                val actor: Actor? = accessControl.authenticate(credential.token) ?: accounts.authenticateToken(credential.token)
+                actor?.copy(origin = request.origin.remoteHost)
             }
         }
+        register(WebSessionAuthenticationProvider(signIn, accounts))
     }
 }
 
-/** The authenticated caller. Only valid inside `authenticate(API_AUTH)`. */
-fun ApplicationCall.actor(): Actor = principal<Actor>() ?: error("Route is not guarded by authenticate(API_AUTH)")
+/** The authenticated caller, by key or browser session. Only valid inside `authenticate(API_AUTH, ...)`. */
+fun ApplicationCall.actor(): Actor =
+    principal<Actor>() ?: principal<WebPrincipal>()?.actor ?: error("Route is not guarded by authenticate(API_AUTH)")
 
 /** Returns this actor when its role is one of [roles]; otherwise fails with 403. */
 fun Actor.requireRole(vararg roles: Role): Actor {

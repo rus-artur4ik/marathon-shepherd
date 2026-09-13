@@ -6,6 +6,8 @@ import dev.shepherd.adapter.api.DEVICE_TYPE_EMULATOR
 import dev.shepherd.configureServer
 import dev.shepherd.infra.state.StateStore
 import dev.shepherd.protocol.SessionResponse
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -24,7 +26,8 @@ internal fun ApplicationTestBuilder.startManager(
     tempDir: File,
     name: String,
     devices: Int = 10,
-    extraConfig: String = ""
+    extraConfig: String = "",
+    signInHttpClient: HttpClient = HttpClient(CIO)
 ): ManagerServices {
     val provider = RouteTestProvider(
         availableDevices = devices,
@@ -40,7 +43,11 @@ internal fun ApplicationTestBuilder.startManager(
         """.trimMargin()
     )
     val services =
-        managerServices(createRouteProviderRegistry(configFile, listOf(provider)), StateStore(File(tempDir, "$name.db").absolutePath))
+        managerServices(
+            createRouteProviderRegistry(configFile, listOf(provider)),
+            StateStore(File(tempDir, "$name.db").absolutePath),
+            signInHttpClient = signInHttpClient
+        )
     application { configureServer(services) }
     return services
 }

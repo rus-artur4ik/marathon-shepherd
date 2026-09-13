@@ -11,13 +11,17 @@ at `/docs`.
 Every `/api/v1/...` call carries `Authorization: Bearer <key>`. `/live`, `/ready`,
 `/health`, `/metrics` and the API docs stay public.
 
-On first start the manager creates an admin key, prints it once and stores it in
-`<dataDir>/initial-admin-token`; set `MSH_ADMIN_TOKEN` to provision a known admin token
-instead. With the admin key, create one client per consumer:
+People sign in with a password, LDAP or an OIDC provider (see
+[authentication.md](authentication.md)) and use a personal token on the command line:
 
 ```bash
 export MSH_URL=http://manager.internal:6037
-export MSH_TOKEN=<admin key>
+mshctl login --username dana      # prompts for the password and keeps a token for mshctl
+```
+
+CI jobs, scripts and agents get an API client with its own key, which an admin creates:
+
+```bash
 mshctl clients create --name android-ci --role user --max-devices 8 --max-lifetime 7200
 ```
 
