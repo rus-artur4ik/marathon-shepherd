@@ -22,6 +22,7 @@ import dev.shepherd.api.providerRoutes
 import dev.shepherd.api.publicAuthRoutes
 import dev.shepherd.api.respondError
 import dev.shepherd.api.sessionRoutes
+import dev.shepherd.api.uiRoutes
 import dev.shepherd.api.userAdminRoutes
 import dev.shepherd.domain.FleetMonitor
 import dev.shepherd.domain.LeaseReconciler
@@ -452,6 +453,7 @@ fun Application.configureServer(services: ManagerServices) {
         healthRoutes(services)
         metricsRoutes(services.metrics.registry)
         docsRoutes()
+        uiRoutes()
         publicAuthRoutes(services)
         // Clients and scripts send a key; the web UI rides on its session cookie.
         authenticate(API_AUTH, WEB_AUTH) {

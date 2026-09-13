@@ -14,7 +14,6 @@ import dev.shepherd.protocol.AuthProviderDto
 import dev.shepherd.protocol.ChangePasswordWithLoginRequest
 import dev.shepherd.protocol.LoginRequest
 import dev.shepherd.protocol.TokenLoginRequest
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.principal
@@ -23,7 +22,6 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.userAgent
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -39,6 +37,7 @@ fun Route.publicAuthRoutes(services: ManagerServices) {
                 AuthMethodsResponse(
                     local = config.local.enabled,
                     ldap = config.ldap != null,
+                    signInError = call.takeSignInError(config),
                     providers = config.oidc.map { provider ->
                         AuthProviderDto(id = provider.id, displayName = provider.label, loginUrl = "/auth/oidc/${provider.id}/login")
                     }
@@ -77,7 +76,14 @@ fun Route.publicAuthRoutes(services: ManagerServices) {
 
     route("/auth/oidc/{provider}") {
         get("/login") {
-            call.respondRedirect(services.signIn.startOidc(call.pathParameter("provider"), call.request.queryParameters["returnTo"]))
+            val target: String = try {
+                services.signIn.startOidc(call.pathParameter("provider"), call.request.queryParameters["returnTo"])
+            } catch (failure: SignInFailure) {
+                // An unreachable or misconfigured provider: back to the sign-in page, which says why.
+                call.setSignInError(failure.message ?: "Sign-in failed", services.authConfig())
+                UI_SIGN_IN_PATH
+            }
+            call.respondRedirect(target)
         }
 
         get("/callback") {
@@ -104,11 +110,10 @@ fun Route.publicAuthRoutes(services: ManagerServices) {
                 )
                 call.respondRedirect(returnTo)
             } catch (failure: SignInFailure) {
-                call.respondText(
-                    text = "Sign-in failed: ${failure.message}",
-                    contentType = ContentType.Text.Plain,
-                    status = HttpStatusCode.Unauthorized
-                )
+                // Back to the sign-in page, which shows the reason. It travels in a short-lived cookie
+                // rather than the URL, so a crafted link cannot put its own words on that page.
+                call.setSignInError(failure.message ?: "Sign-in failed", services.authConfig())
+                call.respondRedirect(UI_SIGN_IN_PATH)
             }
         }
     }

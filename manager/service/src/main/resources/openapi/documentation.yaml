@@ -981,9 +981,10 @@ paths:
             type: string
       responses:
         "302":
-          description: To the provider's sign-in page.
-        "401":
-          $ref: "#/components/responses/SignInFailed"
+          description: |
+            To the provider's sign-in page. When the provider cannot be used (unreachable, or a
+            broken OpenID configuration), back to the web UI's sign-in page, with the reason kept
+            for `GET /api/v1/auth/methods` as for a failed callback.
   /auth/oidc/{provider}/callback:
     parameters:
       - $ref: "#/components/parameters/OidcProvider"
@@ -1012,13 +1013,10 @@ paths:
             type: string
       responses:
         "302":
-          description: Signed in; the session cookie is set and the browser goes to `returnTo`.
-        "401":
-          description: The sign-in failed; the reason is in the plain-text body.
-          content:
-            text/plain:
-              schema:
-                type: string
+          description: |
+            Signed in: the session cookie is set and the browser goes to `returnTo`. Not signed in:
+            the browser goes to the web UI's sign-in page, and the reason waits in a short-lived
+            cookie that `GET /api/v1/auth/methods` returns once as `signInError`.
   /api/v1/me/password:
     post:
       tags: [people]
@@ -2323,6 +2321,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthProvider"
+        signInError:
+          type: string
+          description: Why the last OIDC sign-in in this browser failed; returned once.
     AuthProvider:
       type: object
       required: [id, displayName, loginUrl]

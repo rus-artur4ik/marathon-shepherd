@@ -77,7 +77,9 @@ data class PasswordResetResponse(
 data class AuthMethodsResponse(
     val local: Boolean,
     val ldap: Boolean,
-    val providers: List<AuthProviderDto> = emptyList()
+    val providers: List<AuthProviderDto> = emptyList(),
+    /** Why the last OIDC sign-in in this browser failed; returned once, then forgotten. */
+    val signInError: String? = null
 )
 
 @Serializable

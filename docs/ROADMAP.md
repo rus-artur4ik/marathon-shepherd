@@ -119,10 +119,10 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 
 ## Phase 8 — Web UI
 
-- [ ] Sign-in page: password form and one button per OIDC provider
-- [ ] Overview, devices (with maintenance), sessions (create, extend, release), providers
-- [ ] Live event feed
-- [ ] Administration: users, API clients and keys, audit log, configuration
-- [ ] Profile: change password, personal API tokens
-- [ ] Served by the manager with a strict Content-Security-Policy; checked in a real browser
+- [x] Sign-in page: password form and one button per OIDC provider
+- [x] Overview, devices (with maintenance), sessions (create, extend, release), providers
+- [x] Live event feed
+- [x] Administration: users, API clients and keys, audit log, configuration
+- [x] Profile: change password, personal API tokens
+- [x] Served by the manager with a strict Content-Security-Policy; checked in a real browser
 

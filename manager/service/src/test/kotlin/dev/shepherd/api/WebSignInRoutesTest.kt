@@ -5,6 +5,7 @@ import dev.shepherd.domain.auth.ClientQuota
 import dev.shepherd.domain.auth.Role
 import dev.shepherd.domain.provider.SettableClock
 import dev.shepherd.infra.auth.FakeOidcProvider
+import dev.shepherd.protocol.AuthMethodsResponse
 import dev.shepherd.protocol.CreatedUserResponse
 import dev.shepherd.protocol.IssuedTokenResponse
 import dev.shepherd.protocol.PasswordResetResponse
@@ -203,18 +204,7 @@ class WebSignInRoutesTest {
         val services = startManager(
             tempDir,
             "oidc",
-            extraConfig = """
-                |auth:
-                |  publicUrl: "https://shepherd.example.com"
-                |  oidc:
-                |    - id: keycloak
-                |      displayName: Keycloak
-                |      issuer: "${provider.issuer}"
-                |      clientId: ${FakeOidcProvider.CLIENT_ID}
-                |      clientSecret: ${FakeOidcProvider.CLIENT_SECRET}
-                |      roleMapping:
-                |        shepherd-admins: admin
-            """.trimMargin(),
+            extraConfig = oidcConfig(provider),
             signInHttpClient = provider.client
         )
         val browser: HttpClient = createClient { followRedirects = false }
@@ -237,9 +227,62 @@ class WebSignInRoutesTest {
         assertTrue(cookie.secure, "an https public URL makes the cookie secure-only")
         assertEquals("carol", me.name)
         assertEquals("admin", me.role)
-        assertEquals(HttpStatusCode.Unauthorized, replayed.status)
+        assertEquals(HttpStatusCode.Found, replayed.status, "a used state is refused")
+        assertEquals("/ui/#/sign-in", replayed.headers[HttpHeaders.Location])
         assertEquals("carol", checkNotNull(services.accounts.findByUsername("carol")).username)
     }
+
+    @Test
+    fun `a failed OIDC sign-in shows its reason on the sign-in page once`() = testApplication {
+        val provider = FakeOidcProvider(SettableClock(Instant.now()))
+        startManager(tempDir, "oidc-failure", extraConfig = oidcConfig(provider), signInHttpClient = provider.client)
+        val browser: HttpClient = createClient { followRedirects = false }
+
+        val failed: HttpResponse = browser.get("/auth/oidc/keycloak/callback?code=abc&state=forged")
+        val reason = failed.setCookie().single { cookie -> cookie.name == SIGN_IN_ERROR_COOKIE }
+        val shown: HttpResponse = client.get("/api/v1/auth/methods") { header(HttpHeaders.Cookie, "$SIGN_IN_ERROR_COOKIE=${reason.value}") }
+        val methods: AuthMethodsResponse = TestJson.decodeFromString(shown.bodyAsText())
+        val later: AuthMethodsResponse = TestJson.decodeFromString(client.get("/api/v1/auth/methods").bodyAsText())
+
+        assertEquals(HttpStatusCode.Found, failed.status)
+        assertEquals("/ui/#/sign-in", failed.headers[HttpHeaders.Location])
+        assertTrue(reason.httpOnly)
+        assertEquals("/api/v1/auth", reason.path)
+        assertTrue(methods.signInError.orEmpty().isNotBlank(), "the reason is shown")
+        assertEquals(0, shown.setCookie().single { cookie -> cookie.name == SIGN_IN_ERROR_COOKIE }.maxAge, "reading it clears it")
+        assertEquals(null, later.signInError)
+    }
+
+    @Test
+    fun `a provider that cannot be reached sends the browser back to the sign-in page`() = testApplication {
+        val provider = FakeOidcProvider(SettableClock(Instant.now()))
+        startManager(
+            tempDir,
+            "oidc-down",
+            extraConfig = oidcConfig(provider, issuer = "https://down.example.com/realms/qa"),
+            signInHttpClient = provider.client
+        )
+        val browser: HttpClient = createClient { followRedirects = false }
+
+        val start: HttpResponse = browser.get("/auth/oidc/keycloak/login?returnTo=/ui/")
+
+        assertEquals(HttpStatusCode.Found, start.status)
+        assertEquals("/ui/#/sign-in", start.headers[HttpHeaders.Location])
+        assertTrue(start.setCookie().any { cookie -> cookie.name == SIGN_IN_ERROR_COOKIE && cookie.value.isNotEmpty() })
+    }
+
+    private fun oidcConfig(provider: FakeOidcProvider, issuer: String = provider.issuer): String = """
+        |auth:
+        |  publicUrl: "https://shepherd.example.com"
+        |  oidc:
+        |    - id: keycloak
+        |      displayName: Keycloak
+        |      issuer: "$issuer"
+        |      clientId: ${FakeOidcProvider.CLIENT_ID}
+        |      clientSecret: ${FakeOidcProvider.CLIENT_SECRET}
+        |      roleMapping:
+        |        shepherd-admins: admin
+    """.trimMargin()
 
     private suspend fun ApplicationTestBuilder.login(username: String, password: String): HttpResponse = client.post("/api/v1/auth/login") {
         contentType(ContentType.Application.Json)

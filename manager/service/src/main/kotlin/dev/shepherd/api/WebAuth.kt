@@ -22,11 +22,16 @@ import io.ktor.server.plugins.origin
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import java.time.Duration
+import java.util.Base64
 
 /** Name of the provider that accepts the web UI's session cookie on the `/api/v1` routes. */
 const val WEB_AUTH: String = "web-session"
 const val SESSION_COOKIE: String = "msh_session"
 const val CSRF_HEADER: String = "X-CSRF-Token"
+const val SIGN_IN_ERROR_COOKIE: String = "msh_signin_error"
+private const val SIGN_IN_ERROR_PATH: String = "/api/v1/auth"
+private const val SIGN_IN_ERROR_LIMIT: Int = 300
+private val SIGN_IN_ERROR_MAX_AGE: Duration = Duration.ofMinutes(5)
 
 /** A person signed in through the browser. */
 data class WebPrincipal(val actor: Actor, val session: ResolvedWebSession)
@@ -78,10 +83,28 @@ val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
     }
 }
 
-internal fun ApplicationCall.setSessionCookie(value: String, config: AuthConfig, maxAge: Duration) {
+internal fun ApplicationCall.setSessionCookie(value: String, config: AuthConfig, maxAge: Duration) =
+    appendCookie(SESSION_COOKIE, value, path = "/", maxAge = maxAge, config = config)
+
+/** Keeps why an OIDC sign-in failed for the sign-in page, which reads it once through GET /api/v1/auth/methods. */
+internal fun ApplicationCall.setSignInError(message: String, config: AuthConfig) {
+    val encoded: String = Base64.getUrlEncoder().withoutPadding().encodeToString(
+        message.take(SIGN_IN_ERROR_LIMIT).toByteArray(Charsets.UTF_8)
+    )
+    appendCookie(SIGN_IN_ERROR_COOKIE, encoded, SIGN_IN_ERROR_PATH, SIGN_IN_ERROR_MAX_AGE, config)
+}
+
+/** The reason kept by [setSignInError], cleared as it is read. */
+internal fun ApplicationCall.takeSignInError(config: AuthConfig): String? {
+    val raw: String = request.cookies[SIGN_IN_ERROR_COOKIE] ?: return null
+    appendCookie(SIGN_IN_ERROR_COOKIE, "", SIGN_IN_ERROR_PATH, Duration.ZERO, config)
+    return runCatching { String(Base64.getUrlDecoder().decode(raw), Charsets.UTF_8) }.getOrNull()?.take(SIGN_IN_ERROR_LIMIT)
+}
+
+private fun ApplicationCall.appendCookie(name: String, value: String, path: String, maxAge: Duration, config: AuthConfig) {
     val attributes: List<String> = buildList {
-        add("$SESSION_COOKIE=$value")
-        add("Path=/")
+        add("$name=$value")
+        add("Path=$path")
         add("Max-Age=${maxAge.seconds.coerceAtLeast(0)}")
         add("HttpOnly")
         add("SameSite=Lax")

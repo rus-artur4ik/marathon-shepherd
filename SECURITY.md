@@ -74,6 +74,11 @@ What is still open by design:
 - A directory decides a person's role at every sign-in when a role mapping is configured. An
   existing browser session is not ended when someone leaves a directory group: it ends by its
   idle timeout or lifetime, or when an admin disables the user.
+- The web UI at `/ui/` is served with a Content-Security-Policy that allows scripts, styles and
+  requests to this manager only: no inline script or style, no other origin, no framing. It builds
+  pages from text nodes, never from HTML strings, so data from the API cannot inject markup. The
+  reason a sign-in failed reaches the sign-in page in a short-lived cookie, not in the URL, so a
+  crafted link cannot put its own words there.
 - Personal tokens act as their person and stop working when revoked, expired, when the person is
   disabled, and while their password is a one-time password.
 

@@ -30,6 +30,11 @@ AI agents can lease devices, and the operational pieces to run it as a service.
 
 ### Added
 
+- **Web UI** at `/ui/`, where the manager's address now leads: sign-in with a password or a button per
+  OIDC provider, an overview, devices (take one, maintenance), sessions (create, extend, release,
+  `adb` commands), providers, live activity, and for admins users, API clients, the audit log and
+  the configuration. Plain HTML, CSS and JavaScript modules served by the manager under a strict
+  Content-Security-Policy, with no build step.
 - **Signing in.** Local accounts with passwords, LDAP / Active Directory and any number of OIDC
   providers, with directory groups mapped to roles. Browser sessions use an `HttpOnly` cookie
   with a CSRF token; failed sign-ins lock a username out for a while. People get personal API

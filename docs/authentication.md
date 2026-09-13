@@ -96,7 +96,9 @@ auth:
 ```
 
 Register `https://shepherd.example.com/auth/oidc/keycloak/callback` as the redirect URI of a
-confidential client with the provider. The sign-in page shows one button per provider.
+confidential client with the provider. The sign-in page shows one button per provider. When a
+provider cannot be reached or does not sign someone in, the browser comes back to the sign-in page,
+which says why.
 
 The manager uses the authorization code flow with PKCE, exchanges the code itself, and trusts
 the ID token only after checking its signature against the provider's published keys (RSA or EC,

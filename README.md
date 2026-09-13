@@ -38,6 +38,7 @@ event stream.
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
 - [Manager API](#manager-api)
+- [Web UI](#web-ui)
 - [Signing in](#signing-in)
 - [Clients](#clients)
 - [Devices for AI agents](#devices-for-ai-agents)
@@ -471,6 +472,19 @@ If no registered devices can ever satisfy the request, the manager fails immedia
 ```
 
 `POST /api/v1/sessions/{id}/wait` long-polls the queue, refreshes the session heartbeat, and returns the updated session payload. The manager allocates the head of the queue as soon as at least one matching device becomes free.
+
+## Web UI
+
+Open the manager's address in a browser (`http://localhost:6037/` goes to `/ui/`) and sign in.
+Everyone sees the fleet: an overview, devices with their state and holder, sessions, providers and
+a live activity feed. People who may take devices take one from its row, or create a session for
+several and copy the `adb` commands that reach them. Admins also put devices into maintenance and
+manage users, API clients, the audit log and the configuration. Under *Your account* everyone
+changes their password and creates personal API tokens.
+
+The UI is plain HTML, CSS and JavaScript served by the manager: no build step, nothing loaded from
+other hosts, and a strict Content-Security-Policy. It uses the same `/api/v1` as every other
+client, through the session cookie and its CSRF token.
 
 ## Signing in
 

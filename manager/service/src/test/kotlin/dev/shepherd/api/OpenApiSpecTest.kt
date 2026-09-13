@@ -43,8 +43,12 @@ class OpenApiSpecTest {
 
         val served: Set<String> = checkNotNull(routingRoot).descendants()
             .mapNotNull { node -> node.operation() }
-            // Swagger UI's own asset routes are not part of the API.
-            .filterNot { operation -> operation.substringAfter(' ').startsWith("/docs") }
+            // Swagger UI's assets and the web UI's pages are not part of the API.
+            .filterNot { operation ->
+                operation.substringAfter(
+                    ' '
+                ).let { path -> path == "/" || path.startsWith("/docs") || path.startsWith("/ui") }
+            }
             .toSortedSet()
         val documented: Set<String> = documentedOperations(OpenApiDocument.yaml).toSortedSet()
 
