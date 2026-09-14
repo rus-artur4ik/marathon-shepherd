@@ -17,6 +17,7 @@ import dev.shepherd.infra.state.StateStore
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -141,6 +142,9 @@ class PostgresDatabaseTest {
         @BeforeAll
         @JvmStatic
         fun startPostgres() {
+            // PostgreSQL refuses to run as root, which is how some CI agents build (the Jenkins one
+            // does). GitHub Actions runs these tests as an ordinary user.
+            assumeFalse(System.getProperty("user.name") == "root", "PostgreSQL does not run as root")
             postgres = EmbeddedPostgres.builder().start()
             database = ShepherdDatabase.postgres(postgres.getJdbcUrl("postgres", "postgres"))
         }
@@ -148,8 +152,8 @@ class PostgresDatabaseTest {
         @AfterAll
         @JvmStatic
         fun stopPostgres() {
-            database.close()
-            postgres.close()
+            if (::database.isInitialized) database.close()
+            if (::postgres.isInitialized) postgres.close()
         }
     }
 }

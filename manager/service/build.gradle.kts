@@ -59,6 +59,9 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.lincheck)
     testImplementation(libs.embedded.postgres)
+    // embedded-postgres brings amd64 PostgreSQL binaries only; these cover arm64 machines.
+    testRuntimeOnly(libs.embedded.postgres.binaries.linux.arm64v8)
+    testRuntimeOnly(libs.embedded.postgres.binaries.darwin.arm64v8)
     // An in-memory directory server for the LDAP sign-in tests
     testImplementation(libs.unboundid.ldapsdk)
     testRuntimeOnly(libs.junit.platform.launcher)
