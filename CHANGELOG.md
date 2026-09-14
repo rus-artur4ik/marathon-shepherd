@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The Kubernetes docs pointed `ADB_SERVER_SOCKET` at `127.0.0.1`, where adb refuses to start a
+  server of its own, so shepherd-adb came up without one. They say `tcp:localhost:5038` now.
+
 ## [0.2.0] — 2026-09-14
 
 Marathon Shepherd grows from a CI device broker into a device manager: authenticated access
