@@ -1,0 +1,18 @@
+{{ include "shepherd-adapter.fullname" . }} ({{ .Values.image.repository }}) is starting.
+
+Register it with the manager as a provider in msh.yaml:
+
+  providers:
+    - name: "<a name for this device pool>"
+{{- if .Values.hostNetwork }}
+      url: "http://<address of the node>:{{ .Values.port }}"
+      accessHost: "<address of the node>"   # where clients reach the leased devices
+{{- else if .Values.service.enabled }}
+      url: "http://{{ include "shepherd-adapter.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.port }}"
+{{- else }}
+      url: "http://<address the manager reaches the pod on>:{{ .Values.port }}"
+{{- end }}
+      secret: "<the adapter's ADAPTER_SECRET>"
+{{ if not (or .Values.secret.value .Values.secret.existingSecret) }}
+WARNING: no ADAPTER_SECRET is set, so the adapter accepts calls without authentication.
+{{- end }}

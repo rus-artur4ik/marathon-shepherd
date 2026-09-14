@@ -2,13 +2,17 @@ package dev.shepherd.adapter.adb
 
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -262,7 +266,8 @@ class AdbProxySessionIntegrationTest {
 
     @Test
     fun `releasing a lease stops the listener accepting new connections`() {
-        val upstream = MockAdbUpstream { }
+        val reachedUpstream = CountDownLatch(1)
+        val upstream = MockAdbUpstream { reachedUpstream.countDown() }
         val controller = LeaseScopedAdbProxyController(
             upstream = AdbSocketAddress("127.0.0.1", upstream.port),
             portPool = null
@@ -279,9 +284,18 @@ class AdbProxySessionIntegrationTest {
         )
         controller.stopLease("lease-closed")
 
-        assertFailsWith<java.io.IOException> {
-            Socket("127.0.0.1", proxyPort).use { it.getInputStream().read() }
+        // Another test may bind the freed port straight away, so a refused connect cannot be
+        // relied on. What must not happen is a request travelling on to the device's adb server.
+        val timeoutMs = 1_000
+        runCatching {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", proxyPort), timeoutMs)
+                socket.soTimeout = timeoutMs
+                socket.getOutputStream().write("000chost:devices".encodeToByteArray())
+                socket.getInputStream().read()
+            }
         }
+        assertFalse(reachedUpstream.await(timeoutMs.toLong(), TimeUnit.MILLISECONDS), "a released lease still forwards to the adb server")
         upstream.close()
     }
 

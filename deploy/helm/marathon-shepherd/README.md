@@ -42,6 +42,7 @@ address, and pass secrets through `extraEnv` (see docs/authentication.md).
 | `database.url` / `.existingSecret` | `""` | `MSH_DB_URL`, a `jdbc:postgresql://...` URL; empty keeps SQLite in the data volume |
 | `persistence.enabled`, `.size` | `true`, `1Gi` | The data directory: SQLite state and the generated admin password |
 | `service.type`, `.port` | `ClusterIP`, `6037` | How the API is exposed inside the cluster |
+| `hostNetwork` | `false` | Serve on the node's own address, for clusters without a load balancer or ingress; pin the pod with `nodeSelector` |
 | `ingress.*` | disabled | Ingress for the API. Terminate TLS there: the manager speaks plain HTTP and every call carries an API key |
 | `serviceMonitor.enabled` | `false` | Prometheus Operator scrape of `/metrics` |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `extraEnv` | sensible defaults | Usual pod knobs |

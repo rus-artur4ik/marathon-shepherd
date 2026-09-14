@@ -126,3 +126,10 @@ libraries and an MCP server for bots. Items are ticked as they land on the
 - [x] Profile: change password, personal API tokens
 - [x] Served by the manager with a strict Content-Security-Policy; checked in a real browser
 
+## Phase 9 — Kubernetes delivery
+
+- [x] `shepherd-adapter` chart: host network, USB devices, persistent lease state
+- [x] `hostNetwork` option in the manager chart
+- [x] Jenkinsfile delivery from master: images pushed to a registry, installed Helm releases upgraded
+- [x] Shared-library tests run in a container on agents without Groovy
+- [x] docs/kubernetes.md

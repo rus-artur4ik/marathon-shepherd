@@ -1,0 +1,73 @@
+# One Marathon Shepherd adapter. It runs next to the devices it serves: shepherd-adb on the node
+# the phones are plugged into, shepherd-farm and shepherd-cuttlefish next to their backends.
+# Register it with the manager as a provider in msh.yaml, with its URL and secret.
+
+image:
+  # ghcr.io/rus-artur4ik/shepherd-adb, shepherd-farm or shepherd-cuttlefish.
+  repository: ghcr.io/rus-artur4ik/shepherd-adb
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ADAPTER_PORT: where the manager calls the adapter.
+port: 7037
+
+# ADAPTER_SECRET: the bearer token the manager sends, equal to the provider's `secret` in
+# msh.yaml. Without one the adapter accepts calls from anyone, which is for development only.
+secret:
+  value: ""
+  existingSecret: ""
+  key: adapter-secret
+
+# Adapter settings as environment variables. For shepherd-adb, for example:
+#   ADB_PROXY_PORT_RANGE: "7600-7609"                # ports clients reach leased devices on
+#   ADB_LEASES_PATH: /var/lib/msh/adb-leases.json    # keep leases on the persistent volume
+env: {}
+
+# More variables in pod spec form, e.g. taken from other Secrets.
+extraEnv: []
+
+# Share the node's network. Adapters hand clients host:port addresses, such as shepherd-adb's
+# proxy ports, which only work when those ports are open on the node itself. Pin the pod to the
+# node with nodeSelector.
+hostNetwork: false
+
+# Phones plugged into the node: run privileged with the USB bus mounted, so the adb server in the
+# pod sees them. If the node already listens on 127.0.0.1:5037 (its own adb server, or an adbd),
+# give the pod's server another port with ANDROID_ADB_SERVER_PORT and point ADB_SERVER_SOCKET at it.
+usb:
+  enabled: false
+  hostPath: /dev/bus/usb
+
+# Adapter state, such as shepherd-adb's lease file, kept across restarts.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 256Mi
+  mountPath: /var/lib/msh
+
+service:
+  enabled: true
+  type: ClusterIP
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    memory: 768Mi
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,5 +1,5 @@
-# The manager only. Adapters run on the machines that hold the devices, which is rarely
-# a Kubernetes node, so this chart deploys neither them nor a database.
+# The manager only. Adapters have their own chart, deploy/helm/shepherd-adapter, for when the
+# devices hang off a Kubernetes node; this chart deploys neither them nor a database.
 
 image:
   repository: ghcr.io/rus-artur4ik/marathon-shepherd
@@ -57,6 +57,10 @@ service:
   type: ClusterIP
   port: 6037
   annotations: {}
+
+# Serve on the node's own address, for clusters without a load balancer or ingress (k3s with
+# servicelb and traefik turned off, say). Pin the pod with nodeSelector so the address stays put.
+hostNetwork: false
 
 ingress:
   enabled: false

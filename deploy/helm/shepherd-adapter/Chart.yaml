@@ -1,0 +1,18 @@
+apiVersion: v2
+name: shepherd-adapter
+description: A Marathon Shepherd adapter (shepherd-adb, shepherd-farm or shepherd-cuttlefish), running next to the devices it serves.
+type: application
+# Chart version; bump on chart changes. appVersion tracks the adapter release.
+version: 0.2.0
+appVersion: "0.2.0"
+home: https://github.com/rus-artur4ik/marathon-shepherd
+sources:
+  - https://github.com/rus-artur4ik/marathon-shepherd
+keywords:
+  - android
+  - adb
+  - testing
+  - ci
+maintainers:
+  - name: rus-artur4ik
+    url: https://github.com/rus-artur4ik

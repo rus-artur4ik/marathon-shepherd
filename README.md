@@ -383,10 +383,12 @@ helm install shepherd deploy/helm/marathon-shepherd \
   --set-file config.content=./msh.yaml
 ```
 
-The chart deploys the manager only: adapters run on the machines that hold the devices. It
-runs a single replica on purpose — the manager locks its database at startup, and a second one
-exits — and keeps `msh.yaml` in a Secret. Point `database.url` at Postgres to keep state there
-instead of the volume. See [deploy/helm/marathon-shepherd/README.md](deploy/helm/marathon-shepherd/README.md).
+The `marathon-shepherd` chart deploys the manager, and `deploy/helm/shepherd-adapter` deploys an
+adapter when the devices hang off a Kubernetes node. The manager runs a single replica on purpose —
+it locks its database at startup, and a second one exits — and keeps `msh.yaml` in a Secret. Point
+`database.url` at Postgres to keep state there instead of the volume.
+[docs/kubernetes.md](docs/kubernetes.md) covers a small cluster without a load balancer, phones
+plugged into a node, moving from Docker Compose and delivery from Jenkins.
 
 ## Manager API
 
@@ -905,7 +907,7 @@ manager/
   cli/                  mshctl operator CLI
   mcp/                  MCP tools and the shepherd-mcp stdio server
 clients/python/         Dependency-free Python client
-docs/                   Client guide, MCP guide, roadmap
+docs/                   Guides: clients, MCP, signing in, Kubernetes; the roadmap
 deploy/                 Dockerfiles, host compose files, Helm chart, msh.yaml.example, observability
 vars/                   Jenkins Shared Library steps
 tests/                  Unit, component, integration, e2e, scale and Jenkins coverage

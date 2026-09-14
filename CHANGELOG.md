@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-09-12
+## [0.2.0] — 2026-09-14
 
 Marathon Shepherd grows from a CI device broker into a device manager: authenticated access
 for many clients, a control plane over individual devices, client libraries, an MCP server so
@@ -69,6 +69,10 @@ AI agents can lease devices, and the operational pieces to run it as a service.
   release-on-exit for the stdio server. See `docs/mcp.md`.
 - Scheduler policies: strict FIFO (default) or priority order, set with `scheduler.policy`.
 - Orphaned adapter leases are reclaimed by a two-pass reconciliation.
+- **Kubernetes.** A `shepherd-adapter` chart for adapters that run on a node (host network, USB
+  devices, persistent lease state), a `hostNetwork` option in the manager chart, and delivery from
+  the Jenkinsfile: on master it pushes `:edge` and `:sha-<commit>` images and upgrades the installed
+  Helm releases. See `docs/kubernetes.md`.
 - **Operations.** Optional Postgres with `MSH_DB_URL` (SQLite stays the default), a
   single-manager lock on the database, retention for finished sessions and audit entries, and
   a Helm chart in `deploy/helm`.
