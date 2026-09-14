@@ -66,9 +66,10 @@ env:
   ADB_PROXY_PORT_RANGE: "7600-7609"
   ADB_LEASES_PATH: /var/lib/msh/adb-leases.json
   # Only when something on the node already listens on 127.0.0.1:5037, such as its own adb
-  # server or the adbd of a board that acts as an Android device.
+  # server or the adbd of a board that acts as an Android device. Write localhost, not
+  # 127.0.0.1: adb starts a server by itself only for a socket it considers local.
   ANDROID_ADB_SERVER_PORT: "5038"
-  ADB_SERVER_SOCKET: "tcp:127.0.0.1:5038"
+  ADB_SERVER_SOCKET: "tcp:localhost:5038"
 ```
 
 The manager, `manager.values.yaml`:

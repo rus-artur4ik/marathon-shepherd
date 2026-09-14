@@ -36,7 +36,8 @@ providers:
 The adapter starts an adb server in the pod. When something on the node already listens on
 `127.0.0.1:5037` (the node's own adb server, or an adbd on boards that act as Android devices), give
 the pod's server another port: `--set env.ANDROID_ADB_SERVER_PORT=5038 --set
-env.ADB_SERVER_SOCKET=tcp:127.0.0.1:5038`.
+env.ADB_SERVER_SOCKET=tcp:localhost:5038`. Write `localhost`, not `127.0.0.1`: adb starts a server by
+itself only for a socket it considers local.
 
 ## Values
 

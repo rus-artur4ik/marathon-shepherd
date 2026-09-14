@@ -38,7 +38,8 @@ hostNetwork: false
 
 # Phones plugged into the node: run privileged with the USB bus mounted, so the adb server in the
 # pod sees them. If the node already listens on 127.0.0.1:5037 (its own adb server, or an adbd),
-# give the pod's server another port with ANDROID_ADB_SERVER_PORT and point ADB_SERVER_SOCKET at it.
+# give the pod's server another port with ANDROID_ADB_SERVER_PORT and point ADB_SERVER_SOCKET at it
+# as tcp:localhost:<port>. adb starts a server by itself only for localhost, not for 127.0.0.1.
 usb:
   enabled: false
   hostPath: /dev/bus/usb
