@@ -69,12 +69,21 @@ function buildPasswordForm(alert, onSignedIn) {
   return form;
 }
 
-export function renderPasswordChange(root, { user, onChanged, onSignOut }) {
+export function renderAccountSetUp(root, { user, onDone, onSignOut }) {
   root.className = 'auth-page';
+  // Nobody owns the account the manager made at first start yet: whoever finishes this form
+  // takes it over and picks the name they will sign in with.
+  const claiming = user.unclaimed === true;
   const alert = h('p', { class: 'form-error', role: 'alert', hidden: true });
-  const submit = h('button', { type: 'submit', class: 'button button-primary button-block' }, 'Save my password');
+  const submit = h('button', { type: 'submit', class: 'button button-primary button-block' },
+    claiming ? 'Create my account' : 'Save my password');
   const form = h('form', { class: 'auth-form' },
-    field('One-time password', input('current', { type: 'password', autocomplete: 'current-password', required: true })),
+    claiming ? field('Username',
+      input('username', { value: user.username, autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false', required: true }),
+      'The name you sign in with from now on. Change it to your own.') : null,
+    claiming ? field('Display name',
+      input('displayName', { value: user.displayName ?? '', autocomplete: 'name' }),
+      'Optional. Shown next to everything you do.') : null,
     field('New password', input('next', { type: 'password', autocomplete: 'new-password', required: true }),
       'A long passphrase works best. It must not be your username.'),
     field('New password again', input('repeat', { type: 'password', autocomplete: 'new-password', required: true })),
@@ -93,8 +102,13 @@ export function renderPasswordChange(root, { user, onChanged, onSignOut }) {
     submit.disabled = true;
     alert.hidden = true;
     try {
-      await post('/api/v1/me/password', { currentPassword: data.get('current'), newPassword: data.get('next') }, { quietUnauthorized: true });
-      await onChanged();
+      // The password that got us here is the one being replaced, so it is not asked for again.
+      const account = await post('/api/v1/me/setup', {
+        username: claiming ? data.get('username') : undefined,
+        displayName: claiming ? data.get('displayName') : undefined,
+        newPassword: data.get('next'),
+      }, { quietUnauthorized: true });
+      await onDone(account);
     } catch (error) {
       fail(error.message);
     } finally {
@@ -103,8 +117,10 @@ export function renderPasswordChange(root, { user, onChanged, onSignOut }) {
   });
   mount(root, h('div', { class: 'auth-card' },
     brand(),
-    h('h1', { class: 'auth-title' }, 'Choose your password'),
-    h('p', { class: 'muted' }, `Welcome, ${user.displayName ?? user.username}. Replace the one-time password you were given to continue.`),
+    h('h1', { class: 'auth-title' }, claiming ? 'Create your administrator account' : 'Choose your password'),
+    h('p', { class: 'muted' }, claiming
+      ? 'This manager has no accounts yet. Take this one over: pick the name you will sign in with and a password of your own.'
+      : `Welcome, ${user.displayName ?? user.username}. Replace the password you were given to continue.`),
     alert,
     form,
     h('button', { type: 'button', class: 'button button-ghost button-block', onClick: onSignOut }, 'Sign out')));

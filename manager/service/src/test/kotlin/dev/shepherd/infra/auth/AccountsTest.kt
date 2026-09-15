@@ -61,6 +61,56 @@ class AccountsTest {
     }
 
     @Test
+    fun `the first administrator takes the account over under a name of their own`() = runTest {
+        val accounts = accounts("claim")
+        val created: UserWithPassword = assertNotNull(accounts.bootstrap(File(tempDir, "claim-password"), presetPassword = null))
+        val temporary: String = checkNotNull(created.temporaryPassword)
+
+        assertTrue(accounts.isUnclaimed(created.user))
+        val claimed: UserRecord = accounts.setUpAccount(created.user, "artur", "Artur G.", CHOSEN_PASSWORD)
+
+        assertEquals("artur", claimed.username)
+        assertEquals("Artur G.", claimed.displayName)
+        assertFalse(claimed.mustChangePassword)
+        assertFalse(accounts.isUnclaimed(claimed))
+        assertNull(accounts.findByUsername("admin"), "the name it was created with is free again")
+        assertNotNull(accounts.verifyLocalPassword(claimed, CHOSEN_PASSWORD))
+        assertNull(accounts.verifyLocalPassword(claimed, temporary), "the one-time password is spent")
+    }
+
+    @Test
+    fun `a first sign-in refuses the password it was given and a name someone else has`() = runTest {
+        val accounts = accounts("claim-guards")
+        accounts.createLocalUser(Actor.SYSTEM, "taken", "another long passphrase", null, null, Role.USER, ClientQuota.UNLIMITED)
+        val created: UserWithPassword = assertNotNull(accounts.bootstrap(File(tempDir, "guard-password"), presetPassword = null))
+        val temporary: String = checkNotNull(created.temporaryPassword)
+
+        assertFailsWith<IllegalArgumentException> { accounts.setUpAccount(created.user, "artur", null, temporary) }
+        assertFailsWith<ConflictException> { accounts.setUpAccount(created.user, "taken", null, CHOSEN_PASSWORD) }
+
+        val untouched: UserRecord = assertNotNull(accounts.findByUsername("admin"), "a refused form changes nothing")
+        assertTrue(untouched.mustChangePassword)
+        assertNotNull(accounts.verifyLocalPassword(untouched, temporary))
+    }
+
+    @Test
+    fun `someone whose password was reset chooses a new one but keeps their name`() = runTest {
+        val accounts = accounts("reset-claim")
+        val created: UserWithPassword =
+            accounts.createLocalUser(Actor.SYSTEM, "gina", null, null, null, Role.USER, ClientQuota.UNLIMITED)
+
+        assertFailsWith<ConflictException> { accounts.setUpAccount(created.user, "gina-renamed", null, CHOSEN_PASSWORD) }
+        val settled: UserRecord = accounts.setUpAccount(created.user, null, null, CHOSEN_PASSWORD)
+
+        assertEquals("gina", settled.username)
+        assertFalse(settled.mustChangePassword)
+        assertNotNull(accounts.verifyLocalPassword(settled, CHOSEN_PASSWORD))
+        assertFailsWith<ConflictException>("a settled account changes its password with the current one") {
+            accounts.setUpAccount(settled, null, null, "yet another long passphrase")
+        }
+    }
+
+    @Test
     fun `the last admin can be neither disabled nor demoted`() = runTest {
         val accounts = accounts("last-admin")
         val admin: UserRecord = checkNotNull(accounts.bootstrap(null, null)).user
@@ -145,5 +195,9 @@ class AccountsTest {
             authConfig = { AuthConfig() },
             clock = clock
         )
+    }
+
+    private companion object {
+        const val CHOSEN_PASSWORD: String = "a much longer passphrase"
     }
 }

@@ -146,6 +146,15 @@ class UserStore(private val db: ShepherdDatabase) {
         Unit
     }
 
+    /** Usernames are unique regardless of case, so both spellings move together. */
+    suspend fun rename(id: String, username: String) = db.tx {
+        Users.update({ Users.id eq id }) { row ->
+            row[Users.username] = username
+            row[usernameKey] = username.lowercase()
+        }
+        Unit
+    }
+
     suspend fun setPassword(id: String, passwordHash: String, mustChange: Boolean) = db.tx {
         Users.update({ Users.id eq id }) { row ->
             row[Users.passwordHash] = passwordHash

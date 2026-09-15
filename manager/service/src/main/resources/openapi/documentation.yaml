@@ -1017,6 +1017,39 @@ paths:
             Signed in: the session cookie is set and the browser goes to `returnTo`. Not signed in:
             the browser goes to the web UI's sign-in page, and the reason waits in a short-lived
             cookie that `GET /api/v1/auth/methods` returns once as `signInError`.
+  /api/v1/me/setup:
+    post:
+      tags: [people]
+      operationId: setUpAccount
+      summary: Finish a first sign-in
+      description: >
+        Replaces the one-time password of the signed-in account with one of its own. The session
+        was opened with that very password, so it is not asked for again. On the account the
+        manager created at first start (`unclaimed`), `username` and `displayName` name it after
+        the person taking it over; every other account keeps its name. Other browser sessions of
+        the account end.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUpAccountRequest"
+      responses:
+        "200":
+          description: The account as it stands now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   /api/v1/me/password:
     post:
       tags: [people]
@@ -2249,6 +2282,9 @@ components:
           type: boolean
         mustChangePassword:
           type: boolean
+        unclaimed:
+          type: boolean
+          description: The account the manager created at first start, waiting to be taken over.
         createdAt:
           type: string
           format: date-time
@@ -2354,6 +2390,18 @@ components:
         expiresAt:
           type: string
           format: date-time
+    SetUpAccountRequest:
+      type: object
+      required: [newPassword]
+      properties:
+        username:
+          type: string
+          description: A name for an unclaimed account; leave it out to keep the current one.
+        displayName:
+          type: string
+        newPassword:
+          type: string
+          format: password
     ChangePasswordRequest:
       type: object
       required: [currentPassword, newPassword]

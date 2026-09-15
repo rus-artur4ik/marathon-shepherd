@@ -36,6 +36,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -139,6 +140,38 @@ class WebSignInRoutesTest {
         assertEquals(HttpStatusCode.Forbidden, tokenRefused.status)
         assertEquals(HttpStatusCode.NoContent, changed.status, changed.bodyAsText())
         assertEquals(HttpStatusCode.OK, allowed.status, "the session that changed the password stays signed in")
+    }
+
+    @Test
+    fun `the first administrator names the account instead of typing the one-time password twice`() = testApplication {
+        val services = startManager(tempDir, "claim")
+        val temporary: String = checkNotNull(
+            services.accounts.bootstrap(File(tempDir, "initial-admin-password"), presetPassword = null)?.temporaryPassword
+        )
+
+        val login: HttpResponse = login("admin", temporary)
+        val cookie: String = "$SESSION_COOKIE=" + login.setCookie().single { cookie -> cookie.name == SESSION_COOKIE }.value
+        val session: WebSessionResponse = TestJson.decodeFromString(login.bodyAsText())
+        val setUp = client.post("/api/v1/me/setup") {
+            header(HttpHeaders.Cookie, cookie)
+            header(CSRF_HEADER, session.csrfToken)
+            contentType(ContentType.Application.Json)
+            setBody("""{"username":"artur","displayName":"Artur G.","newPassword":"$PASSWORD"}""")
+        }
+        val account: UserDto = TestJson.decodeFromString(setUp.bodyAsText())
+        val allowed = client.get("/api/v1/devices") { header(HttpHeaders.Cookie, cookie) }
+        val underTheOldName: HttpResponse = login("admin", PASSWORD)
+        val underTheNewName: HttpResponse = login("artur", PASSWORD)
+
+        assertTrue(session.user.unclaimed, "the account the manager made is nobody's until this form is sent")
+        assertEquals(HttpStatusCode.OK, setUp.status, setUp.bodyAsText())
+        assertEquals("artur", account.username)
+        assertEquals("Artur G.", account.displayName)
+        assertFalse(account.mustChangePassword)
+        assertFalse(account.unclaimed)
+        assertEquals(HttpStatusCode.OK, allowed.status, "the session that finished the form stays signed in")
+        assertEquals(HttpStatusCode.Unauthorized, underTheOldName.status, "admin is not a name anyone signs in with any more")
+        assertEquals(HttpStatusCode.OK, underTheNewName.status)
     }
 
     @Test

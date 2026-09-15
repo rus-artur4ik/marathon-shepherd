@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The first sign-in creates an account instead of only a password.** Signing in with the
+  one-time password no longer asks for it a second time — that password is what opened the
+  session. The account the manager creates at first start now belongs to nobody until that
+  screen is filled in: its first administrator picks the name they will sign in with and a
+  display name, and `admin` stops existing unless they keep it. Someone whose password an admin
+  reset still just chooses a new password, under their own name. New endpoint:
+  `POST /api/v1/me/setup`; `GET /api/v1/me` and the sign-in response carry `unclaimed`.
+
 ### Fixed
 
 - The Kubernetes docs pointed `ADB_SERVER_SOCKET` at `127.0.0.1`, where adb refuses to start a

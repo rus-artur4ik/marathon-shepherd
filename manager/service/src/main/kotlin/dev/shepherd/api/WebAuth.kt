@@ -69,7 +69,7 @@ val BrowserSessionGuard = createRouteScopedPlugin("BrowserSessionGuard") {
             }
         }
         if (web.session.user.mustChangePassword && call.request.path() !in PASSWORD_CHANGE_PATHS) {
-            call.respondError(HttpStatusCode.Forbidden, "Choose a new password first: POST /api/v1/me/password")
+            call.respondError(HttpStatusCode.Forbidden, "Finish signing in first: POST /api/v1/me/setup")
         }
     }
 }
@@ -124,4 +124,10 @@ internal suspend fun ApplicationCall.currentUser(services: ManagerServices): Use
 }
 
 private val SAFE_METHODS: Set<HttpMethod> = setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options)
-private val PASSWORD_CHANGE_PATHS: Set<String> = setOf("/api/v1/auth/session", "/api/v1/auth/logout", "/api/v1/me/password", "/api/v1/me")
+private val PASSWORD_CHANGE_PATHS: Set<String> = setOf(
+    "/api/v1/auth/session",
+    "/api/v1/auth/logout",
+    "/api/v1/me/password",
+    "/api/v1/me/setup",
+    "/api/v1/me"
+)

@@ -89,7 +89,8 @@ helm install marathon-shepherd deploy/helm/marathon-shepherd -n marathon-shepher
 kubectl -n marathon-shepherd exec deploy/marathon-shepherd -- cat /var/lib/msh/initial-admin-password
 ```
 
-Open `http://<node>:6037/` and sign in as `admin` with that one-time password.
+Open `http://<node>:6037/` and sign in as `admin` with that one-time password; the first sign-in
+asks for the name and password you will use from then on.
 
 - Pods on the host network bind the node's ports: nothing else there may use 6037, 7037 or the
   proxy range. Both charts use the Recreate strategy, so an upgrade stops the old pod before the

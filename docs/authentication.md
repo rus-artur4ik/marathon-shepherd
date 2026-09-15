@@ -15,9 +15,15 @@ use personal tokens (see [clients.md](clients.md)).
 
 ## The first admin
 
-On first start the manager creates the user `admin` with a one-time password. It prints the
-password once and writes it to `<MSH_DATA_DIR>/initial-admin-password`, readable by the manager's
-user only. Sign in, choose a password, then delete the file.
+On first start the manager creates an account named `admin` with a one-time password. It prints
+the password once and writes it to `<MSH_DATA_DIR>/initial-admin-password`, readable by the
+manager's user only. Sign in with it, then delete the file.
+
+That account belongs to nobody until its first sign-in in the browser, which asks for the name
+you want to sign in with from now on, a display name and a password of your own — it does not ask
+for the one-time password again, since that is what got you there. Give it your own name and
+`admin` stops existing; keep the name and only the password changes. `mshctl passwd --username
+admin` replaces the password without renaming anything.
 
 Set `MSH_ADMIN_PASSWORD` to choose the first password yourself; it does not have to be changed.
 `MSH_ADMIN_TOKEN` still provisions a static admin API key for automation.

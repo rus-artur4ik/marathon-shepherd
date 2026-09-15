@@ -12,7 +12,7 @@ import overview from './views/overview.js';
 import profile from './views/profile.js';
 import providers from './views/providers.js';
 import sessions from './views/sessions.js';
-import { renderPasswordChange, renderSignIn } from './views/signin.js';
+import { renderAccountSetUp, renderSignIn } from './views/signin.js';
 import users from './views/users.js';
 
 const ROUTES = [
@@ -45,7 +45,7 @@ onSessionProblem((error) => {
     showSignIn('Your session ended. Sign in again.');
   } else {
     state.user = { ...state.user, mustChangePassword: true };
-    showPasswordChange();
+    showAccountSetUp();
   }
 });
 
@@ -75,7 +75,7 @@ async function signedIn(webSession) {
   setCsrfToken(webSession.csrfToken);
   state.user = webSession.user;
   if (state.user.mustChangePassword) {
-    showPasswordChange();
+    showAccountSetUp();
     return;
   }
   state.me = await get('/api/v1/me').catch(() => null);
@@ -96,13 +96,14 @@ function showSignIn(notice) {
   renderSignIn(app, { notice, onSignedIn: signedIn });
 }
 
-function showPasswordChange() {
+function showAccountSetUp() {
   resetShell();
-  renderPasswordChange(app, {
+  const claiming = state.user?.unclaimed === true;
+  renderAccountSetUp(app, {
     user: state.user,
-    onChanged: async () => {
+    onDone: async (account) => {
       await signedIn(await get('/api/v1/auth/session'));
-      toast('Your password is changed.', 'ok');
+      toast(claiming ? `Welcome, ${account.username}. The account is yours.` : 'Your password is changed.', 'ok');
     },
     onSignOut: signOut,
   });

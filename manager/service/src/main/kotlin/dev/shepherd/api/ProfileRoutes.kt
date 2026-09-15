@@ -6,6 +6,7 @@ import dev.shepherd.api.dto.toResponse
 import dev.shepherd.infra.auth.UserRecord
 import dev.shepherd.protocol.ChangePasswordRequest
 import dev.shepherd.protocol.CreateTokenRequest
+import dev.shepherd.protocol.SetUpAccountRequest
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
@@ -26,6 +27,22 @@ fun Route.profileRoutes(services: ManagerServices) {
             val keep: String? = call.principal<WebPrincipal>()?.session?.session?.idHash
             services.accounts.changePassword(user, request.currentPassword, request.newPassword, keepSessionIdHash = keep)
             call.respond(HttpStatusCode.NoContent)
+        }
+
+        // A first sign-in: the temporary password is replaced, and the account the manager made at
+        // first start gets the name its administrator picks. The session proves the old password.
+        post("/setup") {
+            val user: UserRecord = call.currentUser(services)
+            val request = call.receive<SetUpAccountRequest>()
+            val keep: String? = call.principal<WebPrincipal>()?.session?.session?.idHash
+            val account: UserRecord = services.accounts.setUpAccount(
+                user,
+                username = request.username,
+                displayName = request.displayName,
+                newPassword = request.newPassword,
+                keepSessionIdHash = keep
+            )
+            call.respond(account.toDto(services.accounts))
         }
 
         get("/tokens") {

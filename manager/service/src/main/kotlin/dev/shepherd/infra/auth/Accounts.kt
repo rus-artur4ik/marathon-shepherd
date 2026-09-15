@@ -76,7 +76,13 @@ class Accounts(
         val preset: String? = presetPassword?.takeIf { value -> value.isNotBlank() }
         preset?.let { value -> PasswordHasher.requireAcceptable(value, username, authConfig().local.minPasswordLength) }
         val password: String = preset ?: PasswordHasher.generate()
-        val record = newLocalUser(username, displayName = "Administrator", email = null, role = Role.ADMIN, createdBy = "first start")
+        val record = newLocalUser(
+            username,
+            displayName = "Administrator",
+            email = null,
+            role = Role.ADMIN,
+            createdBy = BOOTSTRAP_CREATED_BY
+        )
             .copy(mustChangePassword = preset == null)
         users.insert(record, passwords.hash(password))
         audit.record(
@@ -106,9 +112,7 @@ class Accounts(
             throw ConflictException("Local accounts are turned off (auth.local.enabled); people sign in through a directory")
         }
         val name: String = username.trim()
-        require(USERNAME.matches(name)) {
-            "Usernames are 1-128 letters, digits, '.', '_', '@', '+' or '-', starting with a letter or digit"
-        }
+        requireUsername(name)
         requirePersonRole(role)
         if (users.findByUsername(name) != null) {
             throw ConflictException("A user named '$name' already exists")
@@ -221,6 +225,71 @@ class Accounts(
         users.setPassword(user.id, passwords.hash(newPassword), mustChange = false)
         webSessions.deleteForUser(user.id, keepIdHash = keepSessionIdHash)
         audit.record(toActor(user), AuditActions.USER_PASSWORD_CHANGE, target = user.username)
+    }
+
+    /** True while the account the manager made at first start is still nobody's: no name, no password of their own. */
+    fun isUnclaimed(user: UserRecord): Boolean =
+        user.mustChangePassword && user.source == UserSource.LOCAL && user.createdBy == BOOTSTRAP_CREATED_BY
+
+    /**
+     * Finishes a first sign-in: the person replaces the password they were given and, on the
+     * account the manager created at first start, takes it over under a name of their own.
+     *
+     * This session was opened with the very password being replaced, so asking for it again would
+     * prove nothing; [changePassword] guards every later change with it.
+     *
+     * @param username a new name for an unclaimed account; null or unchanged leaves it alone.
+     */
+    suspend fun setUpAccount(
+        user: UserRecord,
+        username: String?,
+        displayName: String?,
+        newPassword: String,
+        keepSessionIdHash: String? = null
+    ): UserRecord {
+        if (!user.mustChangePassword) {
+            throw ConflictException("${user.username} already chose a password; change it with the current one")
+        }
+        if (user.source != UserSource.LOCAL) {
+            throw ConflictException("${user.username} signs in through ${user.provider}; change the password there")
+        }
+        val wanted: String? = username.cleaned()?.takeIf { name -> name != user.username }
+        if (wanted != null) {
+            if (!isUnclaimed(user)) {
+                throw ConflictException("${user.username} cannot be renamed here; an admin renames people")
+            }
+            requireUsername(wanted)
+            if (users.findByUsername(wanted) != null) {
+                throw ConflictException("A user named '$wanted' already exists")
+            }
+        }
+        val name: String = wanted ?: user.username
+        PasswordHasher.requireAcceptable(newPassword, name, authConfig().local.minPasswordLength)
+        val hash: String = users.passwordHash(user.id) ?: throw ConflictException("${user.username} has no password to change")
+        require(!passwords.verify(newPassword, hash)) { "The new password must differ from the one you were given" }
+
+        val claimed: UserRecord = user.copy(username = name, displayName = displayName.cleaned() ?: user.displayName)
+        if (wanted != null) {
+            users.rename(user.id, name)
+        }
+        if (claimed.displayName != user.displayName) {
+            users.update(claimed)
+        }
+        users.setPassword(user.id, passwords.hash(newPassword), mustChange = false)
+        webSessions.deleteForUser(user.id, keepIdHash = keepSessionIdHash)
+        if (claimed != user) {
+            audit.record(
+                toActor(claimed),
+                AuditActions.USER_UPDATE,
+                target = name,
+                details = buildMap {
+                    if (wanted != null) put("renamedFrom", user.username)
+                    if (claimed.displayName != user.displayName) put("displayName", claimed.displayName ?: "")
+                }
+            )
+        }
+        audit.record(toActor(claimed), AuditActions.USER_PASSWORD_CHANGE, target = name)
+        return getUser(user.id)
     }
 
     /**
@@ -384,6 +453,10 @@ class Accounts(
             disabledAt = null
         )
 
+    private fun requireUsername(name: String) = require(USERNAME.matches(name)) {
+        "Usernames are 1-128 letters, digits, '.', '_', '@', '+' or '-', starting with a letter or digit"
+    }
+
     private fun requirePersonRole(role: Role) {
         require(role != Role.PROVIDER) { "The provider role is for adapters; create an API client for them instead" }
     }
@@ -408,6 +481,9 @@ class Accounts(
 
     companion object {
         const val BOOTSTRAP_USERNAME: String = "admin"
+
+        /** Recorded as the creator of the first-start account, which marks it as nobody's yet. */
+        const val BOOTSTRAP_CREATED_BY: String = "first start"
         const val USER_ID_PREFIX: String = "usr_"
         const val TOKEN_ID_PREFIX: String = "tok_"
         private const val USERNAME_LIMIT = 128

@@ -24,6 +24,8 @@ data class UserDto(
     val active: Boolean,
     /** Set for a new or reset password: the user must choose their own before doing anything else. */
     val mustChangePassword: Boolean = false,
+    /** The account the manager created at first start, waiting for its first administrator to take it over. */
+    val unclaimed: Boolean = false,
     val createdAt: String,
     val createdBy: String? = null,
     val lastLoginAt: String? = null,
@@ -107,6 +109,18 @@ data class WebSessionResponse(
 @Serializable
 data class ChangePasswordRequest(
     val currentPassword: String,
+    val newPassword: String
+)
+
+/**
+ * Body of `POST /api/v1/me/setup`: finish a first sign-in. The password that got the person here is
+ * the one being replaced, so it is not asked for again. [username] renames the account the manager
+ * created at first start, so its first administrator signs in under their own name from then on.
+ */
+@Serializable
+data class SetUpAccountRequest(
+    val username: String? = null,
+    val displayName: String? = null,
     val newPassword: String
 )
 

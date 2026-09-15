@@ -127,8 +127,10 @@ sudo ln -sf "$PWD/manager/cli/build/install/mshctl/bin/mshctl" /usr/local/bin/ms
 
 **4. Sign in as the first admin**
 
-On first start the manager creates the user `admin` and prints a one-time password (a copy is
-in `~/.msh/initial-admin-password`).
+On first start the manager creates an account named `admin` and prints a one-time password (a
+copy is in `~/.msh/initial-admin-password`). Sign in with it at `http://localhost:6037/`: the
+first sign-in asks for the name you want to sign in with from then on and a password of your own.
+From the shell it goes like this instead, keeping the name `admin`:
 
 ```bash
 export MSH_URL=http://localhost:6037

@@ -24,6 +24,7 @@ fun UserRecord.toDto(accounts: Accounts): UserDto = UserDto(
     effectiveQuota = accounts.effectiveQuota(this).toDto(),
     active = isActive,
     mustChangePassword = mustChangePassword,
+    unclaimed = accounts.isUnclaimed(this),
     createdAt = createdAt.toString(),
     createdBy = createdBy,
     lastLoginAt = lastLoginAt?.toString(),
