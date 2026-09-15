@@ -12,7 +12,12 @@ COPY gradle/ gradle/
 COPY adapter/ adapter/
 COPY manager/ manager/
 
-RUN chmod +x gradlew && ./gradlew :adapter:shepherd-farm:installDist --no-daemon
+# Gradle's wrapper distribution, dependency cache and build cache all live in GRADLE_USER_HOME.
+# A BuildKit cache mount keeps them between builds, so a rebuild neither downloads the world nor
+# recompiles what it already compiled. Gradle guards these directories with file locks, hence
+# sharing=locked: concurrent builds wait for each other instead of corrupting the cache.
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+    chmod +x gradlew && ./gradlew :adapter:shepherd-farm:installDist --no-daemon
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre

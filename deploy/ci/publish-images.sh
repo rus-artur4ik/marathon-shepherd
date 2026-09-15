@@ -8,7 +8,9 @@
 #   MSH_IMAGE_TAG         e.g. sha-1a2b3c4
 #   REGISTRY_USER, REGISTRY_TOKEN
 #   MSH_IMAGE_PLATFORMS   buildx platforms, default: the daemon's own. A list such as
-#                         linux/arm64,linux/amd64 needs QEMU on the Docker host.
+#                         linux/arm64,linux/amd64 needs QEMU on the Docker host and builds in a
+#                         throwaway builder, whose cache — including the Gradle cache mount of the
+#                         Dockerfiles — starts empty every run.
 set -euo pipefail
 
 : "${MSH_IMAGE_REGISTRY:?set MSH_IMAGE_REGISTRY}"

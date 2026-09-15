@@ -128,6 +128,11 @@ natively. A list such as `linux/arm64,linux/amd64` needs QEMU on the Docker host
 `docker run --privileged --rm tonistiigi/binfmt --install amd64`. Release images, tagged `X.Y.Z`
 from `vX.Y.Z` git tags, keep coming from GitHub Actions for both architectures.
 
+The builder stages keep Gradle's caches in a BuildKit cache mount, so a rebuild on an agent that
+has built before downloads no dependencies and recompiles only what changed — on the arm64 agent
+that is the difference between roughly four minutes and one per image. `docker builder prune` on
+the agent throws the cache away and the next build pays the full price again.
+
 The delivery scripts, `deploy/ci/publish-images.sh` and `deploy/ci/deploy-helm.sh`, run Docker CLI
 and Helm in containers, so the agent only needs the Docker socket. On an agent that is itself a
 container they reach the workspace through the agent's volumes.
