@@ -95,7 +95,9 @@ asks for the name and password you will use from then on.
 - Pods on the host network bind the node's ports: nothing else there may use 6037, 7037 or the
   proxy range. Both charts use the Recreate strategy, so an upgrade stops the old pod before the
   new one starts, and takes the service down for a few seconds.
-- `usb.enabled` runs the adapter privileged, with the node's `/dev/bus/usb` mounted.
+- `usb.enabled` runs the adapter privileged, with the node's `/dev/bus/usb` mounted. Phones plugged
+  into the node appear as soon as they allow USB debugging for the pod's adb key, which is kept on
+  the data volume so an upgrade does not make them ask again.
 - The volumes use the cluster's default storage class. With a replicated class such as Longhorn,
   the manager's data survives the loss of a node even though the pod is pinned to one.
 

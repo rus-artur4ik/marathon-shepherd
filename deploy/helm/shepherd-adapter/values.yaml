@@ -43,6 +43,9 @@ hostNetwork: false
 usb:
   enabled: false
   hostPath: /dev/bus/usb
+  # Where adb keeps the key pair the phones authorise: $HOME/.android of the container's user.
+  # It is kept on the data volume, so a restarted pod is still the client the phones said yes to.
+  keysDir: /root/.android
 
 # Adapter state, such as shepherd-adb's lease file, kept across restarts.
 persistence:

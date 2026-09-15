@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `shepherd-adapter` chart (0.2.1) keeps adb's key pair on the data volume. It used to be
+  generated afresh in every pod, so each upgrade made every phone ask "Allow USB debugging?"
+  again and stay `unauthorized` until someone tapped it.
 - The Kubernetes docs pointed `ADB_SERVER_SOCKET` at `127.0.0.1`, where adb refuses to start a
   server of its own, so shepherd-adb came up without one. They say `tcp:localhost:5038` now.
 

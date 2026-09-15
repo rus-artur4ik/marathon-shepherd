@@ -33,6 +33,10 @@ providers:
     secret: "<the adapter-secret value>"
 ```
 
+Plug a phone into a USB port of that node with USB debugging on; the pod's adb server sees it at
+once. The phone asks once whether to allow this computer — its adb key pair lives on the data
+volume, so a restarted or upgraded pod is still the computer it allowed.
+
 The adapter starts an adb server in the pod. When something on the node already listens on
 `127.0.0.1:5037` (the node's own adb server, or an adbd on boards that act as Android devices), give
 the pod's server another port: `--set env.ANDROID_ADB_SERVER_PORT=5038 --set
@@ -49,6 +53,7 @@ itself only for a socket it considers local.
 | `env`, `extraEnv` | none | Adapter settings, such as `ADB_PROXY_PORT_RANGE` |
 | `hostNetwork` | `false` | Share the node's network, so the ports the adapter hands out work on the node's address |
 | `usb.enabled`, `.hostPath` | `false`, `/dev/bus/usb` | Run privileged with the node's USB bus mounted |
+| `usb.keysDir` | `/root/.android` | Where adb keeps the key pair the phones authorised; kept on the data volume across restarts |
 | `persistence.enabled`, `.size`, `.mountPath` | `true`, `256Mi`, `/var/lib/msh` | Adapter state such as the lease file |
 | `service.enabled`, `.type` | `true`, `ClusterIP` | A Service for managers inside the cluster; not needed with `hostNetwork` |
 | `resources`, `nodeSelector`, `tolerations`, `affinity` | small requests | Usual pod knobs; pin the pod to the device node |

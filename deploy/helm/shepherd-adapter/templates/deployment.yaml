@@ -99,6 +99,11 @@ spec:
             {{- if .Values.usb.enabled }}
             - name: usb
               mountPath: /dev/bus/usb
+            # The key pair the phones authorised, kept with the data: a new pod is then the same
+            # adb client to them. Otherwise every restart asks each phone "Allow USB debugging?" again.
+            - name: data
+              mountPath: {{ .Values.usb.keysDir }}
+              subPath: adb-keys
             {{- end }}
       volumes:
         - name: data
