@@ -36,6 +36,7 @@ Admins create people and hand them a one-time password:
 mshctl users create --username dana --role user --display-name "Dana Scully"
 mshctl users reset-password usr_…      # a new one-time password; signs them out everywhere
 mshctl users update usr_… --role admin
+mshctl users update usr_… --username dana.scully   # local accounts sign in under the new name
 mshctl users disable usr_… --release-sessions
 ```
 

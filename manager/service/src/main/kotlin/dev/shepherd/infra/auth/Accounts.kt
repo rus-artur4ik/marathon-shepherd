@@ -125,10 +125,16 @@ class Accounts(
         return UserWithPassword(record, temporary)
     }
 
-    /** Absent arguments stay as they are; an empty [displayName] or [email] clears it. */
+    /**
+     * Absent arguments stay as they are; an empty [displayName] or [email] clears it.
+     *
+     * @param username renames a local account, which then signs in under the new name. The name a
+     *   directory gives an account is not ours to change.
+     */
     suspend fun updateUser(
         actor: Actor,
         id: String,
+        username: String? = null,
         displayName: String? = null,
         email: String? = null,
         role: Role? = null,
@@ -136,6 +142,16 @@ class Accounts(
         active: Boolean? = null
     ): UserRecord {
         val current: UserRecord = getUser(id)
+        val rename: String? = username.cleaned()?.takeIf { name -> name != current.username }
+        if (rename != null) {
+            if (current.source != UserSource.LOCAL) {
+                throw ConflictException("${current.username} comes from ${current.provider}; that is where the name is decided")
+            }
+            requireUsername(rename)
+            if (users.findByUsername(rename) != null) {
+                throw ConflictException("A user named '$rename' already exists")
+            }
+        }
         if (role != null && role != current.role) {
             requirePersonRole(role)
             if (current.roleManagedByProvider) {
@@ -167,6 +183,10 @@ class Accounts(
                     if (updated.quota != current.quota) put("quota", updated.quota.toString())
                 }
             )
+        }
+        if (rename != null) {
+            users.rename(id, rename)
+            audit.record(actor, AuditActions.USER_UPDATE, target = rename, details = mapOf("renamedFrom" to current.username))
         }
         if (active != null && active != current.isActive) {
             users.setDisabled(id, if (active) null else clock.instant())

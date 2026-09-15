@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   display name, and `admin` stops existing unless they keep it. Someone whose password an admin
   reset still just chooses a new password, under their own name. New endpoint:
   `POST /api/v1/me/setup`; `GET /api/v1/me` and the sign-in response carry `unclaimed`.
+- Admins can rename a local account afterwards as well: the Username field in the user editor,
+  `username` in `PATCH /api/v1/admin/users/{id}`, and `mshctl users update --username`. The name
+  of an account a directory provisions still comes from the directory.
 
 ### Fixed
 

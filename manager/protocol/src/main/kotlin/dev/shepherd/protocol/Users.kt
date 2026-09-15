@@ -53,6 +53,8 @@ data class CreatedUserResponse(
 /** Body of `PATCH /api/v1/admin/users/{id}`; absent fields stay as they are. */
 @Serializable
 data class UpdateUserRequest(
+    /** Renames a local account; the name of one from a directory cannot be changed here. */
+    val username: String? = null,
     val displayName: String? = null,
     val email: String? = null,
     val role: String? = null,

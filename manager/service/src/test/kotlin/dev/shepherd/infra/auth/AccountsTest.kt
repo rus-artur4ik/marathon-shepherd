@@ -154,6 +154,36 @@ class AccountsTest {
     }
 
     @Test
+    fun `an admin renames a local account but not one a directory named`() = runTest {
+        val accounts = accounts("rename")
+        val dana: UserRecord =
+            accounts.createLocalUser(Actor.SYSTEM, "dana", null, null, null, Role.USER, ClientQuota.UNLIMITED).user
+        accounts.createLocalUser(Actor.SYSTEM, "taken", null, null, null, Role.USER, ClientQuota.UNLIMITED)
+        val external: UserRecord = accounts.provisionExternal(
+            ExternalIdentity(
+                source = UserSource.OIDC,
+                provider = "keycloak",
+                externalId = "subject-9",
+                username = "erin",
+                displayName = "Erin",
+                email = null,
+                groups = setOf("qa"),
+                roleMapping = mapOf("qa" to "user"),
+                defaultRole = null
+            )
+        )
+
+        val renamed: UserRecord = accounts.updateUser(Actor.SYSTEM, dana.id, username = "dana.scully")
+
+        assertEquals("dana.scully", renamed.username)
+        assertEquals(dana.id, renamed.id, "the same account, under a new name")
+        assertNull(accounts.findByUsername("dana"))
+        assertNotNull(accounts.findByUsername("DANA.SCULLY"), "names are unique regardless of case")
+        assertFailsWith<ConflictException> { accounts.updateUser(Actor.SYSTEM, renamed.id, username = "taken") }
+        assertFailsWith<ConflictException> { accounts.updateUser(Actor.SYSTEM, external.id, username = "erin.local") }
+    }
+
+    @Test
     fun `directory accounts are created once, follow their groups and never take a local name`() = runTest {
         val accounts = accounts("external")
         accounts.createLocalUser(Actor.SYSTEM, "alice", null, null, null, Role.USER, ClientQuota.UNLIMITED)

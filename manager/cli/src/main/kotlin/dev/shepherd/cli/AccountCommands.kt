@@ -182,22 +182,29 @@ class UserCreate(clients: ClientFactory) : ShepherdCommand("create", "Create a l
 
 class UserUpdate(clients: ClientFactory) : ShepherdCommand(
     "update",
-    "Change a user's role, name, email or whether they are active (admin)",
+    "Change a user's name, role, email or whether they are active (admin)",
     clients
 ) {
     private val userId: String by argument("USER_ID")
+    private val username: String? by option("--username", help = "rename a local account; they sign in under the new name")
     private val role: String? by option("--role", help = "admin, user or viewer").choice("admin", "user", "viewer")
     private val displayName: String? by option("--display-name")
     private val email: String? by option("--email")
     private val active: String? by option("--active", help = "true to enable, false to disable").choice("true", "false")
 
     override suspend fun execute(client: ShepherdClient) {
-        if (role == null && displayName == null && email == null && active == null) {
-            throw UsageError("Nothing to change: pass --role, --display-name, --email or --active")
+        if (username == null && role == null && displayName == null && email == null && active == null) {
+            throw UsageError("Nothing to change: pass --username, --role, --display-name, --email or --active")
         }
         val updated: UserDto = client.updateUser(
             userId,
-            UpdateUserRequest(displayName = displayName, email = email, role = role, active = active?.toBooleanStrict())
+            UpdateUserRequest(
+                username = username,
+                displayName = displayName,
+                email = email,
+                role = role,
+                active = active?.toBooleanStrict()
+            )
         )
         if (jsonOutput) printJson(UserDto.serializer(), updated) else echo(formatUser(updated))
     }

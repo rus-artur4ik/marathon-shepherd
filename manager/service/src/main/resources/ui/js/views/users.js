@@ -57,11 +57,15 @@ export default {
 
     const edit = async (user) => {
       const roleSelect = select('role', ROLES, user.role, { disabled: user.roleManagedByProvider });
+      // A directory owns the names of the accounts it provisions.
+      const local = user.source === 'local';
       const updated = await showDialog({
         title: `Edit ${user.username}`,
         wide: true,
         body: [
           h('div', { class: 'form-grid' },
+            local ? field('Username', input('username', { value: user.username, autocapitalize: 'none', spellcheck: 'false' }),
+              'The name they sign in with.') : null,
             field('Display name', input('displayName', { value: user.displayName ?? '' })),
             field('Email', input('email', { type: 'email', value: user.email ?? '' })),
             field('Role', roleSelect, user.roleManagedByProvider ? `Set by ${user.provider} groups at every sign-in.` : null)),
@@ -69,6 +73,7 @@ export default {
           quotaFields(user.quota),
         ],
         onSubmit: (data) => patch(`/api/v1/admin/users/${segment(user.id)}`, {
+          username: local ? blankToNull(data.get('username')) : undefined,
           displayName: blankToNull(data.get('displayName')),
           email: blankToNull(data.get('email')),
           role: user.roleManagedByProvider ? undefined : data.get('role'),
@@ -76,7 +81,7 @@ export default {
         }),
       });
       if (updated) {
-        toast(`${user.username} updated.`, 'ok');
+        toast(updated.username === user.username ? `${user.username} updated.` : `${user.username} is now ${updated.username}.`, 'ok');
         await render();
       }
     };

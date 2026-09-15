@@ -57,6 +57,7 @@ fun Route.userAdminRoutes(services: ManagerServices) {
             val updated = services.accounts.updateUser(
                 actor = actor,
                 id = call.pathParameter("id"),
+                username = request.username,
                 displayName = request.displayName,
                 email = request.email,
                 role = request.role?.let(Role::parse),

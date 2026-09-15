@@ -2325,6 +2325,9 @@ components:
     UpdateUserRequest:
       type: object
       properties:
+        username:
+          type: string
+          description: Renames a local account; a name a directory gave cannot be changed here.
         displayName:
           type: string
         email:
