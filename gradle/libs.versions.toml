@@ -19,7 +19,7 @@ hikari = "7.1.0"
 embedded-postgres = "2.2.2"
 # The PostgreSQL binaries embedded-postgres resolves; it brings only amd64 ones itself.
 embedded-postgres-binaries = "14.22.0"
-nimbus-jose-jwt = "10.0.2"
+nimbus-jose-jwt = "10.9.1"
 unboundid-ldapsdk = "7.0.2"
 
 [libraries]
