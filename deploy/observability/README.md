@@ -98,6 +98,8 @@ This is the authoritative list of metric names the dashboard and alerts are buil
 | `msh_sessions_finished_total` | counter | `status="released"\|"expired"\|"failed"` | |
 | `msh_sessions_queue_wait_seconds_{bucket,count,sum,max}` | histogram | — | Creation to allocation |
 | `msh_sessions_lifetime_seconds_{bucket,count,sum,max}` | histogram | `status` | Creation to terminal status |
+| `msh_sessions_stored` | gauge | `status="pending"\|"ready"\|"failed"\|"released"\|"expired"` | Sessions in the database; finished ones stay for `sessions.retentionDays`. Read from the database every minute, so it survives a restart, unlike the counters |
+| `msh_sessions_last_request_seconds` | gauge | — | Unix time the newest session in the database was requested; `0` when there is none |
 | `msh_devices_allocated_total` | counter | — | |
 | `msh_provider_up` | gauge | `provider` | `0`/`1` |
 | `msh_provider_devices` | gauge | `provider`, `state="available"\|"busy"\|"total"` | |

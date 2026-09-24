@@ -1,6 +1,7 @@
 package dev.shepherd.domain.metrics
 
 import dev.shepherd.domain.FleetSnapshot
+import dev.shepherd.domain.model.SessionHistory
 import dev.shepherd.domain.model.SessionStatus
 import java.time.Duration
 
@@ -36,6 +37,9 @@ interface ManagerMetrics {
 
     /** Clients currently connected to the event stream. */
     fun eventSubscribers(count: Int) {}
+
+    /** A periodic read of the sessions table; see [SessionHistory]. */
+    fun historyObserved(history: SessionHistory) {}
 
     companion object {
         /** Discards everything. */

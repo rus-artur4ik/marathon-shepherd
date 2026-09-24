@@ -259,6 +259,16 @@ fun main(args: Array<String>) {
 
     val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     backgroundScope.launch {
+        // Read the sessions table once up front, so that right after a restart the history gauges
+        // show what the database remembers rather than "never" until the first cleanup.
+        suspend fun observeSessionHistory() {
+            try {
+                metrics.historyObserved(stateStore.sessionHistory())
+            } catch (e: Exception) {
+                logger.warn("Session history for metrics failed: {}", e.message)
+            }
+        }
+        observeSessionHistory()
         var cleanups = 0
         while (true) {
             delay(CLEANUP_INTERVAL_MS)
@@ -268,6 +278,7 @@ fun main(args: Array<String>) {
             } catch (e: Exception) {
                 logger.error("Session cleanup failed", e)
             }
+            observeSessionHistory()
             cleanups += 1
             if (cleanups % CLEANUPS_PER_RETENTION_SWEEP == 0) {
                 val config = providerRegistry.currentConfig()

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Two manager gauges read from the sessions table every minute, so they survive a restart:
+  `msh_sessions_stored{status}` (sessions the database still keeps, by status) and
+  `msh_sessions_last_request_seconds` (when the newest session was requested, `0` for none).
+  The counters start from zero on every restart and cannot say when the farm was last used.
+
 ### Changed
 
 - **The first sign-in creates an account instead of only a password.** Signing in with the

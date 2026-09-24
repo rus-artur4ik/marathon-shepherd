@@ -3,6 +3,7 @@ package dev.shepherd.infra.metrics
 import dev.shepherd.common.BuildInfo
 import dev.shepherd.domain.FleetSnapshot
 import dev.shepherd.domain.metrics.ManagerMetrics
+import dev.shepherd.domain.model.SessionHistory
 import dev.shepherd.domain.model.SessionStatus
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Gauge
@@ -44,6 +45,9 @@ class MicrometerManagerMetrics(
     private val devices: MultiGauge = MultiGauge.builder("msh.devices")
         .description("Devices of providers that list them individually, by adapter-reported state")
         .register(registry)
+    private val storedSessions: MultiGauge = MultiGauge.builder("msh.sessions.stored")
+        .description("Sessions in the database by status; finished ones are kept for sessions.retentionDays")
+        .register(registry)
     private val queueWait: Timer = Timer.builder("msh.sessions.queue.wait")
         .description("Time from session creation until the session received devices")
         .serviceLevelObjectives(*QUEUE_WAIT_BUCKETS)
@@ -57,6 +61,9 @@ class MicrometerManagerMetrics(
 
     @Volatile
     private var subscribers: Double = 0.0
+
+    @Volatile
+    private var lastRequestEpochSeconds: Double = 0.0
 
     init {
         Gauge.builder("msh.build.info") { 1.0 }
@@ -73,9 +80,15 @@ class MicrometerManagerMetrics(
             .description("Unix time of the last completed fleet poll")
             .baseUnit("seconds")
             .register(registry)
+        // Not "last.created": the Prometheus client strips a `_created` suffix.
+        Gauge.builder("msh.sessions.last.request", this) { metrics -> metrics.lastRequestEpochSeconds }
+            .description("Unix time the newest session in the database was requested; 0 when there is none")
+            .baseUnit("seconds")
+            .register(registry)
         // Publish zeros up front so dashboards and alerts see a value, not "no data",
         // before the first poll completes.
         sessions.register(sessionRows(pending = 0, ready = 0), true)
+        historyObserved(SessionHistory.EMPTY)
     }
 
     override fun sessionCreated(deviceType: String?) {
@@ -172,6 +185,16 @@ class MicrometerManagerMetrics(
 
     override fun eventSubscribers(count: Int) {
         subscribers = count.toDouble()
+    }
+
+    override fun historyObserved(history: SessionHistory) {
+        storedSessions.register(
+            SessionStatus.entries.map { status ->
+                MultiGauge.Row.of(Tags.of("status", status.name.lowercase()), history.byStatus[status] ?: 0)
+            },
+            true
+        )
+        lastRequestEpochSeconds = history.lastRequestedAt?.let { at -> at.toEpochMilli() / 1_000.0 } ?: 0.0
     }
 
     private fun sessionRows(pending: Int, ready: Int): List<MultiGauge.Row<*>> = listOf(

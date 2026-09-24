@@ -6,6 +6,7 @@ import dev.shepherd.domain.model.OwnerUsage
 import dev.shepherd.domain.model.QueuePolicy
 import dev.shepherd.domain.model.Session
 import dev.shepherd.domain.model.SessionDevice
+import dev.shepherd.domain.model.SessionHistory
 import dev.shepherd.domain.model.SessionStatus
 import dev.shepherd.infra.db.ShepherdDatabase
 import kotlinx.coroutines.Dispatchers
@@ -262,6 +263,23 @@ class StateStore(val db: ShepherdDatabase) {
                 pending = byStatus[SessionStatus.PENDING.name]?.first?.toInt() ?: 0,
                 ready = ready?.first?.toInt() ?: 0,
                 allocatedDevices = ready?.second ?: 0
+            )
+        }
+    }
+
+    /** Sessions by status and the newest request time, for metrics that must survive a restart. */
+    suspend fun sessionHistory(): SessionHistory = withContext(Dispatchers.IO) {
+        transaction(db.database) {
+            val sessionCount = Sessions.id.count()
+            val byName: Map<String, Long> = Sessions
+                .select(Sessions.status, sessionCount)
+                .groupBy(Sessions.status)
+                .associate { row -> row[Sessions.status] to row[sessionCount] }
+            val newest = Sessions.createdAt.max()
+            val lastRequestedAt: Instant? = Sessions.select(newest).firstOrNull()?.get(newest)
+            SessionHistory(
+                byStatus = SessionStatus.entries.associateWith { status -> byName[status.name]?.toInt() ?: 0 },
+                lastRequestedAt = lastRequestedAt
             )
         }
     }

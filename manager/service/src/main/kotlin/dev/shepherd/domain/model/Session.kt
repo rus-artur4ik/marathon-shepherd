@@ -86,3 +86,17 @@ data class ActiveSessionCounts(
         val NONE = ActiveSessionCounts(pending = 0, ready = 0, allocatedDevices = 0)
     }
 }
+
+/**
+ * What the sessions table still remembers: every status with its count (finished sessions stay
+ * for `sessions.retentionDays`) and when the newest session was requested, null for an empty table.
+ * Unlike the counters, this survives a manager restart.
+ */
+data class SessionHistory(
+    val byStatus: Map<SessionStatus, Int>,
+    val lastRequestedAt: Instant?
+) {
+    companion object {
+        val EMPTY = SessionHistory(byStatus = SessionStatus.entries.associateWith { 0 }, lastRequestedAt = null)
+    }
+}
